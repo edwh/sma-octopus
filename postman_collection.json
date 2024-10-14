@@ -1,0 +1,1940 @@
+{
+  "info": {
+    "_postman_id": "d8428c6c-dfb2-4040-b9bb-325b70adbfef",
+    "name": "SMA CustomFlowSandbox_v6",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "14458681"
+  },
+  "item": [
+    {
+      "name": "CustomFlow - Demo",
+      "item": [
+        {
+          "name": "Token Request (Step 1a)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var data = JSON.parse(responseBody);",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                  "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                  "    pm.collectionVariables.set(\"client_id\", request.data.client_id);",
+                  "    pm.collectionVariables.set(\"client_secret\", request.data.client_secret);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "",
+                  "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "",
+                  "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+              "protocol": "https",
+              "host": [
+                "sandbox-auth",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Token Refresh (Step 1b, important for PROD)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var data = JSON.parse(responseBody);",
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                  "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "refresh_token",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{client_id}}",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{sbx_refresh_token}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+              "protocol": "https",
+              "host": [
+                "sandbox-auth",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "token"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Initiate user authorization-consent (Step2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n\t\"loginHint\": \"apiTestUser@apiSandbox.com\"\r\n}"
+            },
+            "url": {
+              "raw": "https://sandbox.smaapis.de/oauth2/v2/bc-authorize",
+              "protocol": "https",
+              "host": [
+                "sandbox",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "v2",
+                "bc-authorize"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Accept consent_simulate UI/button click (Step3a-good case))",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"state\": \"Accepted\"\n}"
+            },
+            "url": {
+              "raw": "https://sandbox.smaapis.de/oauth2/v2/bc-authorize/apiTestUser@apiSandbox.com/status",
+              "protocol": "https",
+              "host": [
+                "sandbox",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "v2",
+                "bc-authorize",
+                "apiTestUser@apiSandbox.com",
+                "status"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get status of user consent (Step4, check consent)",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "https://sandbox.smaapis.de/oauth2/v2/bc-authorize/apiTestUser@apiSandbox.com",
+              "protocol": "https",
+              "host": [
+                "sandbox",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "v2",
+                "bc-authorize",
+                "apiTestUser@apiSandbox.com"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Monitoring API - Plant list request (Final step)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": []
+            },
+            "url": {
+              "raw": "https://sandbox.smaapis.de/monitoring/v1/plants",
+              "protocol": "https",
+              "host": [
+                "sandbox",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "monitoring",
+                "v1",
+                "plants"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout (invalidate unused session, important for PROD)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  ""
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "name": "Content-Type",
+                "type": "text",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "client_id",
+                  "value": "{{client_id}}",
+                  "description": "Filled only once in step 1a and saved as collection variable",
+                  "type": "text"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}",
+                  "description": "Filled only once in step 1a and saved as collection variable",
+                  "type": "text"
+                },
+                {
+                  "key": "refresh_token",
+                  "value": "{{sbx_refresh_token}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "https://sandbox-auth.smaapis.de/oauth2/logout",
+              "protocol": "https",
+              "host": [
+                "sandbox-auth",
+                "smaapis",
+                "de"
+              ],
+              "path": [
+                "oauth2",
+                "logout"
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "API Calls - Examples",
+      "item": [
+        {
+          "name": "MonitoringApi",
+          "item": [
+            {
+              "name": "Token Request (Prerequisite)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "    pm.collectionVariables.set(\"client_id\", request.data.client_id);",
+                      "    pm.collectionVariables.set(\"client_secret\", request.data.client_secret);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Token Refresh",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "     pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "refresh_token",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "refresh_token",
+                      "value": "{{sbx_refresh_token}}",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "01 Plants List",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});\r",
+                      "\r",
+                      "pm.collectionVariables.set(\"plantId\", data.plants[0].plantId);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/plants",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "plants"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "02 Devices List for Plant",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});\r",
+                      "\r",
+                      "var inverter = data.devices.find(d => d.type === \"Solar Inverters\");\r",
+                      "//console.log(inverter.type)\r",
+                      "pm.collectionVariables.set(\"deviceId\", inverter.deviceId);\r",
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/plants/{{plantId}}/devices",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "devices"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "03 Device Details",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/devices/{{deviceId}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "devices",
+                    "{{deviceId}}"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "04 Plant EnergyBalance per Month",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v2/plants/{{plantId}}/measurements/sets/EnergyBalance/Month?Date={{yearmonth}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v2",
+                    "plants",
+                    "{{plantId}}",
+                    "measurements",
+                    "sets",
+                    "EnergyBalance",
+                    "Month"
+                  ],
+                  "query": [
+                    {
+                      "key": "Date",
+                      "value": "{{yearmonth}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "05 Device EnergyAndPowerPv per Month",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/devices/{{deviceId}}/measurements/sets/EnergyAndPowerPv/Month?Date={{yearmonth}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "devices",
+                    "{{deviceId}}",
+                    "measurements",
+                    "sets",
+                    "EnergyAndPowerPv",
+                    "Month"
+                  ],
+                  "query": [
+                    {
+                      "key": "Date",
+                      "value": "{{yearmonth}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "06 Plant Logs",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/plants/{{plantId}}/logs?from={{fromDate}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "{{fromDate}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "07 Device Logs",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/devices/{{deviceId}}/logs?from={{fromDate}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "devices",
+                    "{{deviceId}}",
+                    "logs"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "{{fromDate}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  ""
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  ""
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BasicReportingApi",
+          "item": [
+            {
+              "name": "Token Request (Prerequisite)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "    pm.collectionVariables.set(\"client_id\", request.data.client_id);",
+                      "    pm.collectionVariables.set(\"client_secret\", request.data.client_secret);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Token Refresh",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "refresh_token",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "refresh_token",
+                      "value": "{{sbx_refresh_token}}",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "01 Plants list",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});\r",
+                      "\r",
+                      "pm.collectionVariables.set(\"plantId\", data.plants[0].plantId) ;\r",
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/basicreporting/v1/plants",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "basicreporting",
+                    "v1",
+                    "plants"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "02 Plant PVGeneration per Month",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/basicreporting/v1/plants/{{plantId}}/measurements/sets/PvGeneration/Month?Date={{yearmonth}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "basicreporting",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "measurements",
+                    "sets",
+                    "PvGeneration",
+                    "Month"
+                  ],
+                  "query": [
+                    {
+                      "key": "Date",
+                      "value": "{{yearmonth}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "03 Plant PVGeneration per Year",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/basicreporting/v1/plants/{{plantId}}/measurements/sets/PvGeneration/Year?Date={{year}}",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "basicreporting",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "measurements",
+                    "sets",
+                    "PvGeneration",
+                    "Year"
+                  ],
+                  "query": [
+                    {
+                      "key": "Date",
+                      "value": "{{year}}"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "GeoForecast",
+          "item": [
+            {
+              "name": "Token Request (Prerequisite)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "    pm.collectionVariables.set(\"client_id\", request.data.client_id);",
+                      "    pm.collectionVariables.set(\"client_secret\", request.data.client_secret);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Token Refresh",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "refresh_token",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "refresh_token",
+                      "value": "{{sbx_refresh_token}}",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "01 Basic Weather Forecast",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"geoLocation\": {\r\n    \"latitude\": 51.31873,\r\n    \"longitude\": 9.49463,\r\n    \"altitude\": 158\r\n  }\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/geoforecast/v1/basic/weather/DayAfterTomorrow",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "geoforecast",
+                    "v1",
+                    "basic",
+                    "weather",
+                    "DayAfterTomorrow"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "02 Basic Power Forecast",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"geoLocation\": {\r\n    \"latitude\": 51.31873,\r\n    \"longitude\": 9.49463,\r\n    \"altitude\": 158\r\n  },\r\n  \"partialGenerators\": [\r\n    {\r\n      \"peakPower\": 30000,\r\n      \"azimuth\": 180,\r\n      \"tilt\": 90\r\n    }\r\n  ]\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/geoforecast/v1/basic/power/DayAfterTomorrow",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "geoforecast",
+                    "v1",
+                    "basic",
+                    "power",
+                    "DayAfterTomorrow"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "03 Pro Weather Forecast",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"geoLocation\": {\r\n    \"latitude\": 51.31873,\r\n    \"longitude\": 9.49463,\r\n    \"altitude\": 158\r\n  }\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/geoforecast/v1/pro/weather/Week?interval=Fifteen",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "geoforecast",
+                    "v1",
+                    "pro",
+                    "weather",
+                    "Week"
+                  ],
+                  "query": [
+                    {
+                      "key": "interval",
+                      "value": "Fifteen"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "04 Pro Power Forecast",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n  \"geoLocation\": {\r\n    \"latitude\": 51.31873,\r\n    \"longitude\": 9.49463,\r\n    \"altitude\": 158\r\n  },\r\n  \"partialGenerators\": [\r\n    {\r\n      \"peakPower\": 30000,\r\n      \"azimuth\": 180,\r\n      \"tilt\": 90\r\n    }\r\n  ]\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/geoforecast/v1/pro/power/Week?interval=Five",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "geoforecast",
+                    "v1",
+                    "pro",
+                    "power",
+                    "Week"
+                  ],
+                  "query": [
+                    {
+                      "key": "interval",
+                      "value": "Five"
+                    }
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "GridControl",
+          "item": [
+            {
+              "name": "Token Request (Prerequisite)",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "",
+                      "    pm.collectionVariables.set(\"client_id\", request.data.client_id);",
+                      "    pm.collectionVariables.set(\"client_secret\", request.data.client_secret);",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "client_credentials",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "description": "Fill out only once here. Automatically saved as a collection variable and prefilled in further relevant endpoints.",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Token Refresh",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);",
+                      "pm.test(\"Status code is 200\", function () {",
+                      "    pm.collectionVariables.set(\"sbx_access_token\", data.access_token);",
+                      "    pm.collectionVariables.set(\"sbx_refresh_token\", data.refresh_token);",
+                      "",
+                      "});"
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "name": "Content-Type",
+                    "type": "text",
+                    "value": "application/x-www-form-urlencoded"
+                  }
+                ],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "grant_type",
+                      "value": "refresh_token",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_id",
+                      "value": "{{client_id}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "client_secret",
+                      "value": "{{client_secret}}",
+                      "type": "text"
+                    },
+                    {
+                      "key": "refresh_token",
+                      "value": "{{sbx_refresh_token}}",
+                      "type": "text"
+                    }
+                  ]
+                },
+                "url": {
+                  "raw": "https://sandbox-auth.smaapis.de/oauth2/token",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox-auth",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "oauth2",
+                    "token"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Get Example for PlantId",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "var data = JSON.parse(responseBody);\r",
+                      "pm.test(\"Status code is 200\", function () {\r",
+                      "  pm.response.to.have.status(200);\r",
+                      "});\r",
+                      "\r",
+                      "pm.collectionVariables.set(\"plantId\", data.plants[0].plantId);"
+                    ],
+                    "type": "text/javascript"
+                  }
+                },
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "exec": [
+                      "pm.sendRequest({\r",
+                      "        url:  \"https://sandbox-auth.smaapis.de/oauth2/token\", \r",
+                      "        method: 'POST',\r",
+                      "        header: {\r",
+                      "            'Accept': 'application/json',\r",
+                      "            'Content-Type': 'application/x-www-form-urlencoded'\r",
+                      "        },\r",
+                      "        body: {\r",
+                      "            mode: 'urlencoded',\r",
+                      "            urlencoded: [\r",
+                      "                {key: \"grant_type\", value: \"client_credentials\", disabled: false},\r",
+                      "                {key: \"client_id\", value: pm.collectionVariables.get(\"client_id\"), disabled: false},\r",
+                      "                {key: \"client_secret\", value: pm.collectionVariables.get(\"client_secret\"), disabled: false}\r",
+                      "            ]\r",
+                      "        }\r",
+                      "    }, \r",
+                      "    function (err, response) {\r",
+                      "        console.log(response.json())\r",
+                      "    });\r",
+                      "\r",
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/monitoring/v1/plants",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "monitoring",
+                    "v1",
+                    "plants"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "01 Schedules for Plant",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      "\r",
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [],
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": []
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/gridcontrol/v1/plants/{{plantId}}/schedules",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "gridcontrol",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "schedules"
+                  ]
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "02 Set Schedules for ActivePowerLimit",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "exec": [
+                      ""
+                    ],
+                    "type": "text/javascript"
+                  }
+                }
+              ],
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "[\r\n  {\r\n    \"command\": {\r\n      \"limitWatts\": 0,\r\n      \"commandType\": \"FeedInLimit\",\r\n      \"commandStatus\": \"Scheduled\"\r\n    },\r\n    \"startTime\": \"2022-10-22T15:30+02:00\",\r\n    \"duration\": \"PT15M\"\r\n  }\r\n]",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "https://sandbox.smaapis.de/gridcontrol/v1/plants/{{plantId}}/schedules",
+                  "protocol": "https",
+                  "host": [
+                    "sandbox",
+                    "smaapis",
+                    "de"
+                  ],
+                  "path": [
+                    "gridcontrol",
+                    "v1",
+                    "plants",
+                    "{{plantId}}",
+                    "schedules"
+                  ]
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var moment = require('moment');",
+              "",
+              "pm.collectionVariables.set('year', moment().format((\"YYYY\")));",
+              "console.log(pm.collectionVariables.get(\"year\"));",
+              "",
+              "var momentBefore = moment().subtract(1, 'month'); ",
+              "console.log(momentBefore);",
+              "pm.collectionVariables.set('yearmonth', momentBefore.format((\"YYYY-MM\")));",
+              "console.log(pm.collectionVariables.get(\"yearmonth\"));",
+              "",
+              "pm.collectionVariables.set('fromDate', momentBefore.format((\"YYYY-MM-DD\")));",
+              "console.log(pm.collectionVariables.get(\"fromDate\"));",
+              "",
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{sbx_access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "sbx_access_token",
+      "value": ""
+    },
+    {
+      "key": "sbx_refresh_token",
+      "value": ""
+    },
+    {
+      "key": "client_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "client_secret",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "plantId",
+      "value": ""
+    },
+    {
+      "key": "deviceId",
+      "value": ""
+    },
+    {
+      "key": "yearmonth",
+      "value": ""
+    },
+    {
+      "key": "fromDate",
+      "value": ""
+    },
+    {
+      "key": "year",
+      "value": ""
+    }
+  ]
+}
