@@ -3,7 +3,7 @@ const SMA = require('./sma.js')
 
 SMA.getAccessToken().then((accessToken) => {
   // console.log('Access Token', accessToken)
-  SMA.login(accessToken).then(async (success) => {
+  SMA.loginToAPI(accessToken).then(async (success) => {
     if (success) {
       // console.log('Successfully logged in.')
 
@@ -70,6 +70,8 @@ SMA.getAccessToken().then((accessToken) => {
 
                   const stateOfCharge = measurements.set[0]?.batteryStateOfCharge
                   console.log('State of charge', stateOfCharge, JSON.stringify(measurements.set[0]?.batteryStateOfChargeArray))
+
+                  SMA.setCharging(true)
                 } else {
                   console.log('Error getting measurements', res.statusText)
                 }

@@ -1,3 +1,5 @@
+const {PageTest} = require('@playwright/test')
+
 exports.getAccessToken = async function () {
   // As per https://developer.sma.de/api-access-control#c59491
   let accessToken = null
@@ -33,7 +35,7 @@ exports.getAccessToken = async function () {
   return accessToken
 }
 
-exports.login = async function (accessToken) {
+exports.loginToAPI = async function (accessToken) {
   let ret = false
 
   // As per https://developer.sma.de/api-access-control#c59491

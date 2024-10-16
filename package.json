@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "batteryOn": "npx playwright test batteryOn.test.js",
+    "npx": "npx"
   },
   "keywords": [],
   "author": "",
@@ -13,5 +14,9 @@
     "express": "^4.21.1",
     "postman-collection": "^4.5.0",
     "swagger-client": "^3.29.4"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.7.5"
   }
 }

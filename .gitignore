@@ -13811,3 +13811,8 @@
 /node_modules/wrappy/README.md
 /node_modules/wrappy/wrappy.js
 /node_modules/.package-lock.json
+node_modules/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
