@@ -13,7 +13,6 @@ exports.setCharging = async function (page, val) {
     hasText: 'Areas of application'
   }).first()
 
-  console.log('Find self-consumption')
   const selfConsumption = page.locator('td', {
     hasText: 'Minimum width of self-consumption area'
   })
