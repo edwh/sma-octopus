@@ -17,3 +17,8 @@ You'll need to set the following environment variables.
 * `inverterIP`  This is the IP address of the inverter.
 * `installerPassword` This is the password on the inverter device (not Sunny Portal), as used on the web UI.
 
+# Algorithm
+
+So far there is a very basic threshold-based algorithm for deciding whether to charge.
+There is scope for using SMA's prediction APIs to make this better, and there will be standard
+optimisation techniques I've not researched yet.
