@@ -1,5 +1,7 @@
 const {PageTest} = require('@playwright/test')
 const Octopus = require('./octopus')
+const util = require('util')
+const exec = util.promisify(require('child_process').exec)
 
 exports.getAccessToken = async function () {
   // As per https://developer.sma.de/api-access-control#c59491
@@ -78,87 +80,20 @@ exports.loginToAPI = async function (accessToken) {
 }
 
 exports.getStateOfCharge = async function () {
+  const {stdout, stderr} = await exec('npx playwright test batterySOC.test.js')
+
   let stateOfCharge = null
 
-  const accessToken = await exports.getAccessToken()
-  const success = await exports.loginToAPI(accessToken)
-
-  if (success) {
-    // console.log('Successfully logged in.')
-
-    let res = await fetch('https://monitoring.smaapis.de/v1/plants', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer ' + accessToken,
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (res.ok) {
-      const plants = await res.json()
-      // console.log('Plants', plants)
-
-      if (plants) {
-        // Assume only one plant.
-        const plant = plants.plants[0]
-        // console.log('Plant', plant)
-        const plantId = plant?.plantId
-        // console.log('Plant ID', plantId)
-
-        if (plantId) {
-          res = await fetch(`https://monitoring.smaapis.de/v1/plants/${plantId}/devices`, {
-            method: 'GET',
-            headers: {
-              'Authorization': 'Bearer ' + accessToken,
-              'Content-Type': 'application/json'
-            }
-          })
-
-          if (res.ok) {
-            const devices = await res.json()
-            // console.log('Devices', devices)
-
-            // Find entry with type 'Battery Inverter'
-            const batteryInverter = devices.devices.find(device => device.type === 'Battery Inverter')
-            // console.log('Battery Inverter', batteryInverter)
-
-            res = await fetch(`https://monitoring.smaapis.de/v1/devices/${batteryInverter.deviceId}`, {
-              method: 'GET',
-              headers: {
-                'Authorization': 'Bearer ' + accessToken,
-                'Content-Type': 'application/json'
-              }
-            })
-
-            if (res.ok) {
-              const device = await res.json()
-              // console.log('Inverter device', device)
-
-              // Get current state of charge.
-              res = await fetch(`https://monitoring.smaapis.de/v1/devices/${batteryInverter.deviceId}/measurements/sets/EnergyAndPowerBattery/Recent`, {
-                method: 'GET',
-                headers: {
-                  'Authorization': 'Bearer ' + accessToken,
-                  'Content-Type': 'application/json'
-                }
-              })
-
-              if (res.ok) {
-                const measurements = await res.json()
-                // console.log('Measurements', measurements)
-
-                stateOfCharge = measurements.set[0]?.batteryStateOfCharge
-              } else {
-                console.log('Error getting measurements', res.statusText)
-              }
-            }
-          } else {
-            console.log('Error getting devices', res.statusText)
-          }
-        }
-      }
+  // Parse output and find SOC x
+  const lines = stdout.split('\n')
+  for (const line of lines) {
+    if (line.includes('SOC ')) {
+      stateOfCharge = line.split(' ')[1]
+      break
     }
   }
+
+  console.log('Got SOC', stateOfCharge)
 
   return stateOfCharge
 }

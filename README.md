@@ -9,13 +9,17 @@ combination of Octopus APIs, SMA APIs, and Playwright scripts to control the inv
 
 You'll need to set the following environment variables.
 
+* `inverterIP`  This is the IP address of the inverter.
+* `installerPassword` This is the password on the inverter device (not Sunny Portal), as used on the web UI.
+
+At present we don't use the SMA APIs. If/when we do you'll need to set these variables too. These APIs are chargeable
+and only available to installers, so you'll need to be one or know one.
+
 * `clientId` This is the SMA API client id. SMA APIs are only available to SMA installers, so you'll need to work with
   one to get access.
 * `clientSecret` This is the SMA API secret.
 * `ownerEmail` This is the email address of the owner. When the API is first accessed, the owner will receive an email
   to confirm access.
-* `inverterIP`  This is the IP address of the inverter.
-* `installerPassword` This is the password on the inverter device (not Sunny Portal), as used on the web UI.
 
 # Algorithm
 
