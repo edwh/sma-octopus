@@ -5,6 +5,12 @@ Agile electricity tariffs and battery storage open up the opportunity to store e
 This is a proof of concept tool which controls an SMA Sunny Island inverter based on Octopus Agile prices. It uses a
 combination of Octopus APIs, SMA APIs, and Playwright scripts to control the inverter.
 
+# Installation
+
+`npm install`
+`npx playwright install-deps`
+`npx playwright install`
+
 # Configuration
 
 You'll need to set the following environment variables.
@@ -20,6 +26,10 @@ and only available to installers, so you'll need to be one or know one.
 * `clientSecret` This is the SMA API secret.
 * `ownerEmail` This is the email address of the owner. When the API is first accessed, the owner will receive an email
   to confirm access.
+
+# Execution
+
+`node server.js`
 
 # Algorithm
 

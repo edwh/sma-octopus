@@ -46,7 +46,7 @@ exports.getStateOfCharge = async function (page) {
   }).first()
   await batterySection.click()
 
-  // Wait for section to expect - doesn't seem to work using normal Playwright waits.
+  // Wait for section to expand - doesn't seem to work using normal Playwright waits.
   await page.waitForTimeout(5000)
   const socPercent = page.locator('td', {
     hasText: 'State of charge'

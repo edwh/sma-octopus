@@ -28,7 +28,7 @@ exports.shouldCharge = async function (stateOfCharge) {
 
   // Find median price.
   prices.results.sort((a, b) => a.value_inc_vat - b.value_inc_vat)
-  const median = prices.results[Math.floor(prices.results.length / 2)]
+  const median = prices.results[Math.floor(prices.results.length / 2)].value_inc_vat
 
   const cheap = prices.results[Math.floor(prices.results.length * CHEAP_PERCENTILE / 100)].value_inc_vat
   const moderate = prices.results[Math.floor(prices.results.length * MODERATE_PERCENTILE / 100)].value_inc_vat
@@ -40,15 +40,15 @@ exports.shouldCharge = async function (stateOfCharge) {
   if (current) {
     if (current <= cheap && stateOfCharge <= CHEAP_THRESHOLD) {
       // We have a cheap price and our battery isn't getting full so charge.
-      console.log('Price is cheap (', current, 'vs', cheap, ') and state of charge is low (', CHEAP_THRESHOLD, ') so charge.')
+      console.log('Price is cheap (', current, 'vs', cheap, ', median ', median, ') and state of charge is low (', CHEAP_THRESHOLD, ') so charge.')
       charge = true
     } else if (current <= moderate && stateOfCharge <= MODERATE_THRESHOLD) {
       // We have a moderate price and our battery is getting empty so charge.
       charge = true
-      console.log('Price is moderate (', current, 'vs', moderate, ') and state of charge is very low (', MODERATE_THRESHOLD, ') so charge.')
+      console.log('Price is moderate (', current, 'vs', moderate, ', median ', median, ') and state of charge is very low (', MODERATE_THRESHOLD, ') so charge.')
     } else {
       // It's an expensive period, so just pay the current price.
-      console.log('Price is too high (', current, ') or state of charge is too high (', stateOfCharge, ') so do not charge.')
+      console.log('Price is too high (', current, ', median ', median, ') or state of charge is too high (', stateOfCharge, ') so do not charge.')
     }
   } else {
     console.log('No current price found.')

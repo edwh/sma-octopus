@@ -4,12 +4,13 @@ module.exports = defineConfig({
   testDir: './tests',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 1,
+  retries: 0,
   workers: 1,
-  reporter: 'line',
+  reporter: 'line', // Change to html to view the errors, but this will block execution.
   reportSlowTests: null,
+  timeout: 2 * 60 * 1000,  // On a Raspberry pi, this can take a while.
   use: {
-    trace: 'on-first-retry',
+    trace: 'off',
   },
 
   // We only need Chrome.

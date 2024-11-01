@@ -80,17 +80,20 @@ exports.loginToAPI = async function (accessToken) {
 }
 
 exports.getStateOfCharge = async function () {
-  const {stdout, stderr} = await exec('npx playwright test batterySOC.test.js')
-
   let stateOfCharge = null
+  try {
+    const {stdout, stderr} = await exec('npx playwright test batterySOC.test.js')
 
-  // Parse output and find SOC x
-  const lines = stdout.split('\n')
-  for (const line of lines) {
-    if (line.includes('SOC ')) {
-      stateOfCharge = line.split(' ')[1]
-      break
+    // Parse output and find SOC x
+    const lines = stdout.split('\n')
+    for (const line of lines) {
+      if (line.includes('SOC ')) {
+        stateOfCharge = line.split(' ')[1]
+        break
+      }
     }
+  } catch (e) {
+    console.log('Error getting SOC', e)
   }
 
   console.log('Got SOC', stateOfCharge)
