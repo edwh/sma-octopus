@@ -127,8 +127,8 @@ function saveState() {
   }
 }
 
-async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, currentCapacity = null) {
-  debug('setCharge called', { on, stateOfCharge, currentChargingStateFromInverter, currentCapacity })
+async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, currentCapacity = null, forecastData = {}) {
+  debug('setCharge called', { on, stateOfCharge, currentChargingStateFromInverter, currentCapacity, forecastData })
   
   // Use inverter data for current charging state, fallback to cached state
   const actualCurrentChargingState = currentChargingStateFromInverter !== null ? currentChargingStateFromInverter : currentChargingState
@@ -181,8 +181,16 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     debug('Updated charging state variables', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
     saveState()
     
-    debug('Sending charging started email')
-    await Email.sendChargingStartedEmail()
+    debug('Sending charging started email with forecast data')
+    const startEmailData = {
+      forecastedGeneration: forecastData.forecastedGeneration,
+      adjustedTargetSOC: forecastData.adjustedTargetSOC,
+      originalTargetSOC: forecastData.originalTargetSOC,
+      forecastAdjustment: forecastData.forecastAdjustment,
+      currentSOC: stateOfCharge,
+      currentConsumption: forecastData.currentConsumption
+    }
+    await Email.sendChargingStartedEmail(startEmailData)
     
   } else if (!on && actualCurrentChargingState) {
     // Stopping charge
@@ -261,8 +269,15 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     debug('Reset charging state variables')
     saveState()
     
-    debug('Sending charging stopped email', { kWhCharged, socIncrease, estimatedCost })
-    await Email.sendChargingStoppedEmail(kWhCharged, socIncrease, estimatedCost)
+    debug('Sending charging stopped email with forecast data', { kWhCharged, socIncrease, estimatedCost })
+    const stopEmailData = {
+      forecastedGeneration: forecastData.forecastedGeneration,
+      adjustedTargetSOC: forecastData.adjustedTargetSOC,
+      originalTargetSOC: forecastData.originalTargetSOC,
+      forecastAdjustment: forecastData.forecastAdjustment,
+      batteryCapacity: batteryCapacity
+    }
+    await Email.sendChargingStoppedEmail(kWhCharged, socIncrease, estimatedCost, stopEmailData)
     
   } else if (on) {
     debug('Already charging - no action needed')
@@ -320,14 +335,33 @@ async function main () {
     saveState()
   }
   
-  debug('Calling Octopus shouldCharge logic', { stateOfCharge, currentConsumption, currentChargingState, FORCE_OCTOPUS_GO_WINDOW })
-  const shouldCharge = await Octopus.shouldCharge(stateOfCharge, currentConsumption, currentChargingState, FORCE_OCTOPUS_GO_WINDOW)
-  debug('shouldCharge decision made', shouldCharge)
+  // Get forecasted generation from Sunny Portal
+  debug('Getting forecasted generation from Sunny Portal')
+  let forecastedGeneration = null
+  try {
+    forecastedGeneration = await SMA.getForecastedGeneration()
+    debug('Forecasted generation retrieved', { forecastedGeneration })
+  } catch (error) {
+    debug('Error getting forecast data', error)
+    console.log('⚠️ Could not get forecast data, proceeding with original logic:', error.message)
+    // Continue with null forecast - the logic will handle this gracefully
+  }
+  
+  debug('Calling Octopus shouldCharge logic with forecast data', { 
+    stateOfCharge, 
+    currentConsumption, 
+    currentChargingState, 
+    FORCE_OCTOPUS_GO_WINDOW, 
+    forecastedGeneration 
+  })
+  const chargeDecision = await Octopus.shouldCharge(stateOfCharge, currentConsumption, currentChargingState, FORCE_OCTOPUS_GO_WINDOW, forecastedGeneration)
+  debug('shouldCharge decision made', chargeDecision)
 
-  console.log('State of charge:', stateOfCharge, '% | Current consumption:', currentConsumption, 'W | Currently charging:', currentChargingState, '| Should charge:', shouldCharge)
+  const { shouldCharge, forecastData } = chargeDecision
+  console.log('State of charge:', stateOfCharge, '% | Current consumption:', currentConsumption, 'W | Currently charging:', currentChargingState, '| Forecast:', forecastedGeneration !== null ? forecastedGeneration + ' kWh' : 'N/A', '| Should charge:', shouldCharge)
 
-  debug('Calling setCharge with decision', { shouldCharge, stateOfCharge })
-  await setCharge(shouldCharge, stateOfCharge, currentChargingState, currentCapacity)
+  debug('Calling setCharge with decision and forecast data', { shouldCharge, stateOfCharge, forecastData })
+  await setCharge(shouldCharge, stateOfCharge, currentChargingState, currentCapacity, forecastData)
   debug('===== MAIN FUNCTION COMPLETED =====')
 }
 

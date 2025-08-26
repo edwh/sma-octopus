@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
+    "forecast": "node show-forecast.js",
     "batteryOn": "npx playwright test batteryOn.test.js",
     "batteryOff": "npx playwright test batteryOff.test.js",
     "getAllData": "npx playwright test getAllInverterData.test.js",

@@ -42,8 +42,8 @@ if (EMAIL_ENABLED) {
   debug('Email disabled - no transporter created')
 }
 
-exports.sendChargingStartedEmail = async function() {
-  debug('sendChargingStartedEmail called')
+exports.sendChargingStartedEmail = async function(forecastData = {}) {
+  debug('sendChargingStartedEmail called', forecastData)
   if (!EMAIL_ENABLED || !transporter) {
     debug('Email disabled or no transporter - skipping email')
     console.log('Email notifications disabled')
@@ -51,11 +51,57 @@ exports.sendChargingStartedEmail = async function() {
   }
 
   try {
+    let subject = 'Battery Charging Started'
+    let text = `Battery charging has been turned ON at ${new Date().toLocaleString()}`
+    
+    // Add forecast information if available
+    if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
+      text += `\n\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh expected today`
+      
+      if (forecastData.adjustedTargetSOC !== undefined && forecastData.originalTargetSOC !== undefined) {
+        text += `\n🎯 Target SOC: ${forecastData.adjustedTargetSOC.toFixed(1)}% (adjusted from ${forecastData.originalTargetSOC}%)`
+        text += `\n💡 Charging reduced by ${forecastData.forecastAdjustment.toFixed(1)}% due to expected solar generation`
+      }
+    } else {
+      text += `\n\n⚠️ No solar forecast data available - using standard target SOC`
+    }
+    
+    // Add current state information
+    if (forecastData.currentSOC !== undefined) {
+      text += `\n🔋 Current SOC: ${forecastData.currentSOC}%`
+    }
+    
+    if (forecastData.currentConsumption !== undefined) {
+      text += `\n⚡ Current consumption: ${(forecastData.currentConsumption / 1000).toFixed(2)} kW`
+    }
+    
+    // Add comprehensive system status
+    text += `\n\n=== SYSTEM STATUS ===`
+    if (forecastData.pvGeneration !== undefined && forecastData.pvGeneration !== null) {
+      text += `\n☀️ PV generation: ${(forecastData.pvGeneration / 1000).toFixed(2)} kW`
+    }
+    if (forecastData.purchasedElectricity !== undefined && forecastData.purchasedElectricity !== null) {
+      text += `\n🏠 Grid purchase: ${(forecastData.purchasedElectricity / 1000).toFixed(2)} kW`
+    }
+    if (forecastData.batteryCharging !== undefined && forecastData.batteryCharging !== null) {
+      text += `\n🔋 Battery charging: ${(forecastData.batteryCharging / 1000).toFixed(2)} kW`
+    }
+    
+    // Add Octopus Go window info
+    const now = new Date()
+    const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0')
+    const startTime = process.env.OCTOPUS_GO_START_TIME || '00:30'
+    const endTime = process.env.OCTOPUS_GO_END_TIME || '05:30'
+    
+    text += `\n\n=== OCTOPUS GO ===`
+    text += `\n⏰ Time: ${currentTime}`
+    text += `\n🕐 Window: ${startTime} - ${endTime}`
+
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: process.env.EMAIL_TO,
-      subject: 'Battery Charging Started',
-      text: `Battery charging has been turned ON at ${new Date().toLocaleString()}`
+      subject: subject,
+      text: text
     }
     debug('Sending charging started email', { 
       from: mailOptions.from, 
@@ -72,8 +118,8 @@ exports.sendChargingStartedEmail = async function() {
   }
 }
 
-exports.sendChargingStoppedEmail = async function(kWhCharged = null, socIncrease = null, estimatedCost = null) {
-  debug('sendChargingStoppedEmail called', { kWhCharged, socIncrease, estimatedCost })
+exports.sendChargingStoppedEmail = async function(kWhCharged = null, socIncrease = null, estimatedCost = null, forecastData = {}) {
+  debug('sendChargingStoppedEmail called', { kWhCharged, socIncrease, estimatedCost, forecastData })
   if (!EMAIL_ENABLED || !transporter) {
     debug('Email disabled or no transporter - skipping email')
     console.log('Email notifications disabled')
@@ -90,24 +136,43 @@ exports.sendChargingStoppedEmail = async function(kWhCharged = null, socIncrease
     if (kWhCharged !== null && !isNaN(kWhCharged)) {
       const kWhFormatted = kWhCharged.toFixed(2)
       subjectParts.push(`${kWhFormatted} kWh`)
-      text += `\nTotal kWh charged: ${kWhFormatted} kWh`
+      text += `\n⚡ Total kWh charged: ${kWhFormatted} kWh`
       debug('Including kWh in email', kWhCharged)
     } else {
-      text += `\nkWh charged: Unknown (battery capacity not available or calculation error)`
+      text += `\n⚡ kWh charged: Unknown (battery capacity not available or calculation error)`
       debug('No kWh data available for email', { kWhCharged })
     }
     
     if (socIncrease !== null && !isNaN(socIncrease)) {
       subjectParts.push(`+${socIncrease}%`)
-      text += `\nSOC increase: ${socIncrease}%`
+      text += `\n🔋 SOC increase: ${socIncrease}%`
       debug('Including SOC increase in email', socIncrease)
     }
     
     if (estimatedCost !== null && !isNaN(estimatedCost)) {
       const costFormatted = estimatedCost.toFixed(2)
       subjectParts.push(`£${costFormatted}`)
-      text += `\nEstimated cost: £${costFormatted}`
+      text += `\n💷 Estimated cost: £${costFormatted}`
       debug('Including estimated cost in email', estimatedCost)
+    }
+    
+    // Add forecast decision logic information
+    if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
+      text += `\n\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh expected today`
+      if (forecastData.adjustedTargetSOC !== undefined && forecastData.originalTargetSOC !== undefined) {
+        text += `\n🎯 Target SOC was adjusted from ${forecastData.originalTargetSOC}% to ${forecastData.adjustedTargetSOC.toFixed(1)}%`
+        text += `\n💡 Saved ~${forecastData.forecastAdjustment.toFixed(1)}% charging due to expected solar generation`
+        
+        // Calculate approximate savings
+        if (forecastData.forecastAdjustment > 0 && forecastData.batteryCapacity) {
+          const savedkWh = (forecastData.forecastAdjustment / 100) * forecastData.batteryCapacity
+          const octopusGoRate = parseFloat(process.env.OCTOPUS_GO_RATE) || 8.5
+          const savedCost = savedkWh * (octopusGoRate / 100)
+          text += `\n💰 Estimated savings: ${savedkWh.toFixed(2)} kWh (£${savedCost.toFixed(2)})`
+        }
+      }
+    } else {
+      text += `\n\n⚠️ No solar forecast data was available for this charging session`
     }
     
     if (subjectParts.length > 0) {

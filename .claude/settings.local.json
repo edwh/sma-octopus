@@ -10,7 +10,15 @@
       "Bash(del test-soc.js)",
       "Bash(npx playwright test:*)",
       "Bash(DEBUG=true node -e \"const SMA = require(''./sma.js''); SMA.getAllInverterData().then(console.log).catch(console.error)\")",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "WebFetch(domain:www.sunnyportal.com)",
+      "Bash(DEBUG=true node -e \"const SMA = require(''./sma.js''); SMA.getForecastedGeneration().then(console.log).catch(console.error)\")",
+      "Bash(DEBUG=true node server.js --once --force-window)",
+      "Bash(DEBUG=true node -e \"\nconst Octopus = require(''./octopus.js'');\n// Test with mock forecast data - 10 kWh expected generation\n// SOC=25%, target=30%, but with 10kWh forecast (~32% of 31.2kWh battery)\n// Should reduce target to 30-32=-2%, so min 0% = should charge\nOctopus.shouldCharge(25, null, false, true, 10).then(result => {\n  console.log(''\\n=== SIMULATION WITH 10 kWh FORECAST ==='');\n  console.log(''SOC: 25%, Original Target: 30%'');\n  console.log(''Forecast: 10 kWh (should reduce target significantly)'');\n  console.log(''Result:'', JSON.stringify(result, null, 2));\n}).catch(console.error);\n\")",
+      "WebFetch(domain:login.sma.energy)",
+      "Bash(DEBUG=true node -e \"const SMA = require(''./sma.js''); SMA.getForecastedGeneration().then(console.log).catch(console.error)\")",
+      "Bash(DEBUG=true node -e \"const SMA = require(''./sma.js''); SMA.getForecastedGeneration().then(result => { console.log(''\\n🌞 FORECAST RESULT:'', result, ''kWh''); }).catch(console.error)\")",
+      "Bash(DEBUG=true node -e \"\nconst Octopus = require(''./octopus.js'');\n// Test with real forecast data: 3 kWh\n// SOC=25%, target=30%, with 3kWh forecast (~10% of 31.2kWh battery)\n// Should reduce target from 30% to ~20%\nOctopus.shouldCharge(25, null, false, true, 3).then(result => {\n  console.log(''\\n=== REAL FORECAST TEST ==='');\n  console.log(''SOC: 25%, Original Target: 30%'');\n  console.log(''Real Forecast: 3 kWh from Sunny Portal'');\n  console.log(''Result:'', JSON.stringify(result, null, 2));\n}).catch(console.error);\n\")"
     ],
     "deny": [],
     "ask": []

@@ -103,9 +103,9 @@ exports.getPrices = async function () {
   return data
 }
 
-exports.shouldCharge = async function (stateOfCharge, currentConsumption = null, isCurrentlyCharging = false, forceWindow = false) {
+exports.shouldCharge = async function (stateOfCharge, currentConsumption = null, isCurrentlyCharging = false, forceWindow = false, forecastedGeneration = null) {
   debug('=== shouldCharge called ===')
-  debug('Input parameters', { stateOfCharge, currentConsumption, isCurrentlyCharging, forceWindow })
+  debug('Input parameters', { stateOfCharge, currentConsumption, isCurrentlyCharging, forceWindow, forecastedGeneration })
   let charge = false
 
   // If Octopus Go is enabled, use time-based charging
@@ -117,19 +117,75 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     if (!inTimeWindow) {
       debug('Outside Octopus Go window - rejecting charge')
       console.log('Outside Octopus Go window - not charging')
-      return false
+      return {
+        shouldCharge: false,
+        forecastData: {
+          forecastedGeneration,
+          adjustedTargetSOC: OCTOPUS_GO_TARGET_SOC,
+          originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+          forecastAdjustment: 0,
+          currentConsumption
+        }
+      }
     }
     
     debug('Within Octopus Go window - checking SOC and consumption thresholds')
     console.log('Within Octopus Go window (', OCTOPUS_GO_START_TIME, '-', OCTOPUS_GO_END_TIME, ')')
     
-    // Check if battery SOC is already at or above target
-    if (stateOfCharge >= OCTOPUS_GO_TARGET_SOC) {
-      debug('Battery SOC at or above target - not charging', { stateOfCharge, OCTOPUS_GO_TARGET_SOC })
-      console.log('Battery SOC (', stateOfCharge, '%) is at or above target (', OCTOPUS_GO_TARGET_SOC, '%) - not charging')
-      return false
+    // Calculate adjusted target SOC based on forecasted generation
+    let adjustedTargetSOC = OCTOPUS_GO_TARGET_SOC
+    let forecastAdjustment = 0
+    
+    if (forecastedGeneration !== null && forecastedGeneration > 0) {
+      // Convert forecasted kWh to percentage of battery capacity
+      // We need to get battery capacity for this calculation
+      // For now, we'll make a reasonable assumption or fallback
+      const assumedBatteryCapacity = 31.2 // kWh - can be made configurable
+      forecastAdjustment = (forecastedGeneration / assumedBatteryCapacity) * 100
+      adjustedTargetSOC = OCTOPUS_GO_TARGET_SOC - forecastAdjustment
+      
+      // Ensure adjusted target doesn't go below 0
+      adjustedTargetSOC = Math.max(0, adjustedTargetSOC)
+      
+      debug('Forecast-adjusted target SOC calculation', {
+        originalTarget: OCTOPUS_GO_TARGET_SOC,
+        forecastedGeneration,
+        assumedBatteryCapacity,
+        forecastAdjustment,
+        adjustedTargetSOC
+      })
+      
+      console.log('📈 Forecasted generation:', forecastedGeneration, 'kWh')
+      console.log('🔄 Target SOC adjusted from', OCTOPUS_GO_TARGET_SOC, '% to', adjustedTargetSOC.toFixed(1), '% (reduction:', forecastAdjustment.toFixed(1), '%)')
+    } else {
+      debug('No forecast data available - using original target SOC')
+      console.log('⚠️ No forecast data available - using original target SOC of', OCTOPUS_GO_TARGET_SOC, '%')
     }
-    debug('Battery SOC below target - continuing with charging logic', { stateOfCharge, OCTOPUS_GO_TARGET_SOC })
+    
+    // Check if battery SOC is already at or above adjusted target
+    if (stateOfCharge >= adjustedTargetSOC) {
+      debug('Battery SOC at or above adjusted target - not charging', { 
+        stateOfCharge, 
+        adjustedTargetSOC, 
+        originalTarget: OCTOPUS_GO_TARGET_SOC,
+        forecastAdjustment 
+      })
+      console.log('🔋 Battery SOC (', stateOfCharge, '%) is at or above adjusted target (', adjustedTargetSOC.toFixed(1), '%) - not charging')
+      if (forecastedGeneration > 0) {
+        console.log('💡 Charging stopped early due to', forecastedGeneration, 'kWh expected solar generation today')
+      }
+      return {
+        shouldCharge: false,
+        forecastData: {
+          forecastedGeneration,
+          adjustedTargetSOC,
+          originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+          forecastAdjustment,
+          currentConsumption
+        }
+      }
+    }
+    debug('Battery SOC below adjusted target - continuing with charging logic', { stateOfCharge, adjustedTargetSOC, originalTarget: OCTOPUS_GO_TARGET_SOC })
     
     // Check consumption thresholds if provided
     if (currentConsumption !== null) {
@@ -143,21 +199,57 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
       if (!isCurrentlyCharging && currentConsumption > CONSUMPTION_START_THRESHOLD) {
         debug('Consumption exceeds start threshold - not starting charge')
         console.log('Current consumption (', currentConsumption, 'W) exceeds start threshold (', CONSUMPTION_START_THRESHOLD, 'W) - not starting charge')
-        return false
+        return {
+          shouldCharge: false,
+          forecastData: {
+            forecastedGeneration,
+            adjustedTargetSOC,
+            originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+            forecastAdjustment,
+            currentConsumption
+          }
+        }
       } else if (isCurrentlyCharging && currentConsumption > CONSUMPTION_STOP_THRESHOLD) {
         debug('Consumption exceeds stop threshold - stopping charge')
         console.log('Current consumption (', currentConsumption, 'W) exceeds stop threshold (', CONSUMPTION_STOP_THRESHOLD, 'W) - stopping charge')
-        return false
+        return {
+          shouldCharge: false,
+          forecastData: {
+            forecastedGeneration,
+            adjustedTargetSOC,
+            originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+            forecastAdjustment,
+            currentConsumption
+          }
+        }
       }
       debug('Consumption thresholds passed')
     } else {
       debug('No consumption data available - skipping consumption checks')
     }
     
-    // Within time window, SOC below target, and consumption is acceptable - charge
-    debug('All Octopus Go conditions met - approving charge')
-    console.log('Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (target:', OCTOPUS_GO_TARGET_SOC, '%), consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
-    return true
+    // Within time window, SOC below adjusted target, and consumption is acceptable - charge
+    debug('All Octopus Go conditions met - approving charge', { 
+      adjustedTargetSOC, 
+      originalTarget: OCTOPUS_GO_TARGET_SOC, 
+      forecastAdjustment 
+    })
+    if (forecastedGeneration > 0) {
+      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (adjusted target:', adjustedTargetSOC.toFixed(1), '%, original:', OCTOPUS_GO_TARGET_SOC, '%), forecast:', forecastedGeneration, 'kWh, consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
+    } else {
+      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (target:', OCTOPUS_GO_TARGET_SOC, '%), consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
+    }
+    
+    return {
+      shouldCharge: true,
+      forecastData: {
+        forecastedGeneration,
+        adjustedTargetSOC,
+        originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+        forecastAdjustment,
+        currentConsumption
+      }
+    }
   }
 
   // Fallback to original Agile logic
@@ -168,7 +260,16 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
   if (!prices || !prices.results) {
     debug('No price data available for Agile logic')
     console.log('No price data available')
-    return false
+    return {
+      shouldCharge: false,
+      forecastData: {
+        forecastedGeneration,
+        adjustedTargetSOC: OCTOPUS_GO_TARGET_SOC,
+        originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+        forecastAdjustment: 0,
+        currentConsumption
+      }
+    }
   }
 
   // Find median price.
@@ -215,5 +316,14 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
   }
 
   debug('Final Agile charging decision', charge)
-  return charge
+  return {
+    shouldCharge: charge,
+    forecastData: {
+      forecastedGeneration,
+      adjustedTargetSOC: OCTOPUS_GO_TARGET_SOC,
+      originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+      forecastAdjustment: 0,
+      currentConsumption
+    }
+  }
 }
