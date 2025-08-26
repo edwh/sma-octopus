@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install dotenv nodemailer)",
+      "Bash(node:*)",
+      "Bash(timeout:*)",
+      "Bash(DEBUG=true node server.js --force-window)",
+      "Bash(DEBUG=true node server.js --help)",
+      "Bash(DEBUG=true node test-soc.js)",
+      "Bash(del test-soc.js)",
+      "Bash(npx playwright test:*)",
+      "Bash(DEBUG=true node -e \"const SMA = require(''./sma.js''); SMA.getAllInverterData().then(console.log).catch(console.error)\")",
+      "Bash(npm run:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

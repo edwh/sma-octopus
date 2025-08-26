@@ -1,32 +1,339 @@
-require('swagger-client')
+require('dotenv').config()
 const SMA = require('./sma.js')
 const Octopus = require('./octopus.js')
+const Email = require('./email.js')
+const fs = require('fs')
+const path = require('path')
 const util = require('util')
 const exec = util.promisify(require('child_process').exec)
 
-let charge = false
+// Parse command line arguments
+const args = process.argv.slice(2)
+const FORCE_OCTOPUS_GO_WINDOW = args.includes('--force-window') || args.includes('-f')
+const SHOW_HELP = args.includes('--help') || args.includes('-h')
 
-async function setCharge (on) {
-  if (on) {
-    const {stdout, stderr} = await exec('npx playwright test batteryOn.test.js')
-    console.log('Charging battery...', stdout, stderr)
-  } else {
-    const {stdout, stderr} = await exec('npx playwright test batteryOff.test.js')
-    console.log('Not charging battery...', stdout, stderr)
+// Show help and exit if requested
+if (SHOW_HELP) {
+  console.log(`
+SMA Octopus Battery Management System
+
+Usage: node server.js [options]
+
+Options:
+  -f, --force-window    Force the system to act as if it's within the Octopus Go time window
+  -h, --help           Show this help message
+
+Environment Variables:
+  DEBUG=true           Enable detailed debug logging
+  OCTOPUS_GO_ENABLED   Enable Octopus Go mode (true/false)
+  
+Examples:
+  node server.js                    # Normal operation
+  node server.js --force-window     # Test charging logic outside normal hours
+  DEBUG=true node server.js         # Run with debug logging
+`)
+  process.exit(0)
+}
+
+// Debug logging utility
+const DEBUG = process.env.DEBUG === 'true'
+function debug(message, data = null) {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString()
+    if (data !== null) {
+      console.log(`[DEBUG ${timestamp}] ${message}:`, data)
+    } else {
+      console.log(`[DEBUG ${timestamp}] ${message}`)
+    }
   }
+}
+
+// State tracking
+let currentChargingState = false
+let chargingStartTime = null
+let chargingStartSOC = null
+let batteryCapacity = null // Cache battery capacity to avoid repeated lookups
+const stateFile = path.join(__dirname, 'charging-state.json')
+
+// Load previous state
+function loadState() {
+  debug('Loading previous state from file', stateFile)
+  try {
+    if (fs.existsSync(stateFile)) {
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+      currentChargingState = state.charging || false
+      chargingStartTime = state.startTime ? new Date(state.startTime) : null
+      chargingStartSOC = state.startSOC || null
+      batteryCapacity = state.batteryCapacity || null
+      debug('Successfully loaded state', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
+      console.log('Loaded previous state:', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
+    } else {
+      debug('No previous state file found, using defaults')
+    }
+  } catch (error) {
+    debug('Error loading state file', error)
+    console.error('Error loading state:', error)
+  }
+}
+
+// Save current state
+function saveState() {
+  debug('Saving current state to file')
+  try {
+    const state = {
+      charging: currentChargingState,
+      startTime: chargingStartTime?.toISOString(),
+      startSOC: chargingStartSOC,
+      batteryCapacity: batteryCapacity
+    }
+    debug('State to save', state)
+    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
+    debug('State saved successfully')
+  } catch (error) {
+    debug('Error saving state to file', error)
+    console.error('Error saving state:', error)
+  }
+}
+
+async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, currentCapacity = null) {
+  debug('setCharge called', { on, stateOfCharge, currentChargingStateFromInverter, currentCapacity })
+  
+  // Use inverter data for current charging state, fallback to cached state
+  const actualCurrentChargingState = currentChargingStateFromInverter !== null ? currentChargingStateFromInverter : currentChargingState
+  debug('Using charging state', { fromInverter: currentChargingStateFromInverter, cached: currentChargingState, actual: actualCurrentChargingState })
+  
+  if (on && !actualCurrentChargingState) {
+    // Starting to charge
+    debug('Starting battery charging process')
+    try {
+      const {stdout, stderr} = await exec('npx playwright test batteryOn.test.js')
+      console.log('Starting battery charging...', stdout, stderr)
+      debug('Battery charging command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
+    } catch (error) {
+      debug('Error executing battery on script', error)
+      console.error('Error starting battery charging:', error)
+      
+      // Send detailed error email
+      await Email.sendErrorEmail('Battery On Script Error', error.message, {
+        script: 'batteryOn.test.js',
+        operation: 'Starting battery charging',
+        stdout: error.stdout || 'No stdout',
+        stderr: error.stderr || 'No stderr',
+        stackTrace: error.stack,
+        systemInfo: {
+          timestamp: new Date().toISOString(),
+          stateOfCharge: stateOfCharge,
+          currentConsumption: 'unknown',
+          targetCharging: true
+        },
+        environment: {
+          DEBUG: process.env.DEBUG,
+          inverterIP: process.env.inverterIP,
+          OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED
+        }
+      })
+      
+      // Don't update charging state if script failed
+      return
+    }
+    
+    // Update charging state with current inverter data
+    currentChargingState = true
+    chargingStartTime = new Date()
+    chargingStartSOC = stateOfCharge
+    // Store the capacity at charging start time for accurate calculations later
+    if (batteryCapacity === null && currentCapacity !== null) {
+      batteryCapacity = currentCapacity
+      debug('Battery capacity stored at charging start', batteryCapacity)
+    }
+    debug('Updated charging state variables', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
+    saveState()
+    
+    debug('Sending charging started email')
+    await Email.sendChargingStartedEmail()
+    
+  } else if (!on && actualCurrentChargingState) {
+    // Stopping charge
+    debug('Stopping battery charging process')
+    try {
+      const {stdout, stderr} = await exec('npx playwright test batteryOff.test.js')
+      console.log('Stopping battery charging...', stdout, stderr)
+      debug('Battery stop command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
+    } catch (error) {
+      debug('Error executing battery off script', error)
+      console.error('Error stopping battery charging:', error)
+      
+      // Send detailed error email
+      await Email.sendErrorEmail('Battery Off Script Error', error.message, {
+        script: 'batteryOff.test.js',
+        operation: 'Stopping battery charging',
+        stdout: error.stdout || 'No stdout',
+        stderr: error.stderr || 'No stderr',
+        stackTrace: error.stack,
+        systemInfo: {
+          timestamp: new Date().toISOString(),
+          stateOfCharge: stateOfCharge,
+          chargingStartTime: chargingStartTime?.toISOString() || 'unknown',
+          chargingStartSOC: chargingStartSOC || 'unknown',
+          targetCharging: false
+        },
+        environment: {
+          DEBUG: process.env.DEBUG,
+          inverterIP: process.env.inverterIP,
+          OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED
+        }
+      })
+      
+      // Don't update charging state or send emails if script failed
+      return
+    }
+    
+    // Calculate kWh charged using actual battery capacity if available
+    let kWhCharged = null
+    let socIncrease = null
+    let estimatedCost = null
+    
+    if (chargingStartSOC !== null && stateOfCharge !== null && !isNaN(chargingStartSOC) && !isNaN(stateOfCharge)) {
+      debug('Calculating kWh charged', { chargingStartSOC, currentSOC: stateOfCharge })
+      
+      // Use capacity from inverter data if available, otherwise get from cache/API
+      const actualCapacity = batteryCapacity || await getBatteryCapacity()
+      socIncrease = stateOfCharge - chargingStartSOC
+      debug('SOC calculation', { socIncrease, actualCapacity })
+      
+      if (actualCapacity !== null && !isNaN(actualCapacity) && !isNaN(socIncrease)) {
+        kWhCharged = (socIncrease / 100) * actualCapacity
+        // Ensure kWhCharged is not NaN
+        if (!isNaN(kWhCharged) && kWhCharged > 0) {
+          // Calculate estimated cost using Octopus Go rate
+          const octopusGoRate = parseFloat(process.env.OCTOPUS_GO_RATE) || 8.5
+          estimatedCost = kWhCharged * (octopusGoRate / 100) // Convert pence to pounds
+          
+          console.log(`Calculated kWh charged: SOC increase ${socIncrease}% × ${actualCapacity}kWh = ${kWhCharged.toFixed(2)}kWh (est. £${estimatedCost.toFixed(2)})`)
+          debug('kWh calculation completed', { kWhCharged, socIncrease, estimatedCost })
+        } else {
+          debug('kWh calculation resulted in NaN or zero', { socIncrease, actualCapacity })
+          kWhCharged = null
+        }
+      } else {
+        console.log(`SOC increased by ${socIncrease}% (kWh unknown - battery capacity not available or invalid)`)
+        debug('kWh calculation skipped - capacity unknown or invalid', { actualCapacity, socIncrease })
+      }
+    } else {
+      debug('kWh calculation skipped - SOC data missing or invalid', { chargingStartSOC, stateOfCharge })
+    }
+    
+    currentChargingState = false
+    chargingStartTime = null
+    chargingStartSOC = null
+    debug('Reset charging state variables')
+    saveState()
+    
+    debug('Sending charging stopped email', { kWhCharged, socIncrease, estimatedCost })
+    await Email.sendChargingStoppedEmail(kWhCharged, socIncrease, estimatedCost)
+    
+  } else if (on) {
+    debug('Already charging - no action needed')
+    console.log('Already charging - no action needed')
+  } else {
+    debug('Already not charging - no action needed')
+    console.log('Already not charging - no action needed')
+  }
+}
+
+// Get battery capacity (cached to avoid repeated calls) - fallback for legacy usage
+async function getBatteryCapacity() {
+  debug('getBatteryCapacity called (legacy fallback)', { cached: batteryCapacity !== null })
+  if (batteryCapacity === null) {
+    try {
+      debug('Battery capacity not cached, fetching from inverter')
+      batteryCapacity = await SMA.getBatteryCapacity()
+      if (batteryCapacity !== null) {
+        debug('Battery capacity successfully retrieved', batteryCapacity)
+        saveState() // Save the capacity so we don't need to fetch it again
+      }
+    } catch (error) {
+      debug('Error getting battery capacity', error)
+      console.error('Error getting battery capacity:', error)
+    }
+  }
+  return batteryCapacity
 }
 
 async function main () {
-  const stateOfCharge = await SMA.getStateOfCharge()
-  const shouldCharge = await Octopus.shouldCharge(stateOfCharge)
-
-  if (shouldCharge) {
-    // We know it's worth charging now.
-    await setCharge(shouldCharge)
-  } else {
-    // We shouldn't be charging, or failed to work out whether we should.  Don't charge.
-    await setCharge(false)
+  debug('===== MAIN FUNCTION STARTED =====')
+  debug('Environment variables loaded', {
+    DEBUG: process.env.DEBUG,
+    OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
+    EMAIL_ENABLED: process.env.EMAIL_ENABLED,
+    inverterIP: process.env.inverterIP,
+    FORCE_OCTOPUS_GO_WINDOW
+  })
+  
+  if (FORCE_OCTOPUS_GO_WINDOW) {
+    console.log('🔧 FORCE WINDOW MODE: Simulating Octopus Go time window')
   }
+  console.log('Running battery management check at', new Date().toLocaleString())
+  
+  debug('Getting all inverter data in single session')
+  const inverterData = await SMA.getAllInverterData()
+  debug('All inverter data retrieved', inverterData)
+  
+  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState } = inverterData
+  
+  // Update cached battery capacity if we got it
+  if (currentCapacity !== null && batteryCapacity !== currentCapacity) {
+    batteryCapacity = currentCapacity
+    debug('Updated cached battery capacity', batteryCapacity)
+    saveState()
+  }
+  
+  debug('Calling Octopus shouldCharge logic', { stateOfCharge, currentConsumption, currentChargingState, FORCE_OCTOPUS_GO_WINDOW })
+  const shouldCharge = await Octopus.shouldCharge(stateOfCharge, currentConsumption, currentChargingState, FORCE_OCTOPUS_GO_WINDOW)
+  debug('shouldCharge decision made', shouldCharge)
+
+  console.log('State of charge:', stateOfCharge, '% | Current consumption:', currentConsumption, 'W | Currently charging:', currentChargingState, '| Should charge:', shouldCharge)
+
+  debug('Calling setCharge with decision', { shouldCharge, stateOfCharge })
+  await setCharge(shouldCharge, stateOfCharge, currentChargingState, currentCapacity)
+  debug('===== MAIN FUNCTION COMPLETED =====')
 }
 
-main()
+// Load previous state on startup
+debug('System starting up')
+debug('Debug mode enabled:', DEBUG)
+loadState()
+
+// Run main function
+debug('Starting main execution')
+main().catch(async (error) => {
+  debug('Main function error', error)
+  console.error(error)
+  
+  // Send error email for main function failures
+  try {
+    await Email.sendErrorEmail('System Error', error.message, {
+      script: 'server.js',
+      operation: 'Main execution loop',
+      stackTrace: error.stack,
+      systemInfo: {
+        timestamp: new Date().toISOString(),
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        uptime: process.uptime()
+      },
+      environment: {
+        DEBUG: process.env.DEBUG,
+        inverterIP: process.env.inverterIP,
+        OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
+        OCTOPUS_GO_START_TIME: process.env.OCTOPUS_GO_START_TIME,
+        OCTOPUS_GO_END_TIME: process.env.OCTOPUS_GO_END_TIME,
+        OCTOPUS_GO_TARGET_SOC: process.env.OCTOPUS_GO_TARGET_SOC,
+        EMAIL_ENABLED: process.env.EMAIL_ENABLED
+      }
+    })
+  } catch (emailError) {
+    console.error('Failed to send error email:', emailError)
+  }
+})

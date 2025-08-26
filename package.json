@@ -4,16 +4,21 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "node server.js",
     "batteryOn": "npx playwright test batteryOn.test.js",
-    "npx": "npx"
+    "batteryOff": "npx playwright test batteryOff.test.js",
+    "getAllData": "npx playwright test getAllInverterData.test.js",
+    "test": "npx playwright test",
+    "test:headless": "npx playwright test --headed=false",
+    "install-playwright": "npx playwright install",
+    "install-deps": "npx playwright install-deps"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.21.1",
-    "postman-collection": "^4.5.0",
-    "swagger-client": "^3.29.4"
+    "dotenv": "^17.2.1",
+    "nodemailer": "^7.0.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",

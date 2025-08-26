@@ -1,102 +1,157 @@
-const {PageTest} = require('@playwright/test')
-const Octopus = require('./octopus')
+require('dotenv').config()
 const util = require('util')
 const exec = util.promisify(require('child_process').exec)
+const Email = require('./email.js')
 
-exports.getAccessToken = async function () {
-  // As per https://developer.sma.de/api-access-control#c59491
-  let accessToken = null
-
-  // console.log('Client ID', process.env.clientId)
-  // console.log('Client Secret', process.env.clientSecret)
-
-  const res = await fetch('https://auth.smaapis.de/oauth2/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
-    },
-    body: new URLSearchParams({
-      'client_id': process.env.clientId,
-      'client_secret': process.env.clientSecret,
-      'grant_type': 'client_credentials',
-    })
-  })
-
-  // console.log('Res',res)
-
-  if (res.ok) {
-    const data = await res.json()
-    // console.log('Data', data)
-
-    if (data.access_token) {
-      accessToken = data.access_token
-    }
-  } else {
-    console.log('Error getting access token', res.statusText)
-  }
-
-  return accessToken
-}
-
-exports.loginToAPI = async function (accessToken) {
-  let ret = false
-
-  // As per https://developer.sma.de/api-access-control#c59491
-  //
-  // First time we run this, it'll trigger an email to give us permission.
-  // console.log('Log in as', process.env.ownerEmail, accessToken)
-  const res = await fetch('https://async-auth.smaapis.de/oauth2/v2/bc-authorize', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + accessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      'loginHint': process.env.ownerEmail,
-    })
-  })
-
-  // console.log('Res',res)
-
-  if (res.ok) {
-    const data = await res.json()
-    // console.log('Data', data)
-    const state = data?.state
-    // console.log('Login state', state)
-
-    if (state === 'Pending') {
-      console.log('You should have an email to grant access.')
-    } else if (state === 'Accepted') {
-      // console.log('Logged in successfully.')
-      ret = true
+// Debug logging utility
+const DEBUG = process.env.DEBUG === 'true'
+function debug(message, data = null) {
+  if (DEBUG) {
+    const timestamp = new Date().toISOString()
+    if (data !== null) {
+      console.log(`[DEBUG ${timestamp}] SMA: ${message}:`, data)
     } else {
-      console.log('Unknown login state', data)
+      console.log(`[DEBUG ${timestamp}] SMA: ${message}`)
     }
-  } else {
-    console.log('Error', res.statusText)
   }
-
-  return ret
 }
 
-exports.getStateOfCharge = async function () {
-  let stateOfCharge = null
-  try {
-    const {stdout, stderr} = await exec('npx playwright test batterySOC.test.js')
 
-    // Parse output and find SOC x
+exports.getAllInverterData = async function () {
+  debug('Getting all inverter data in single session')
+  let data = {
+    stateOfCharge: null,
+    consumption: null,
+    capacity: null,
+    isCharging: null
+  }
+  
+  try {
+    debug('Executing getAllInverterData.test.js via Playwright')
+    const {stdout, stderr} = await exec('npx playwright test getAllInverterData.test.js')
+    debug('Playwright unified test completed', {
+      stdoutLength: stdout.length,
+      stderrLength: stderr.length
+    })
+    
+    // Parse all outputs from the unified script
     const lines = stdout.split('\n')
+    debug('Parsing unified output lines', { lineCount: lines.length })
+    
     for (const line of lines) {
-      if (line.includes('SOC ')) {
-        stateOfCharge = line.split(' ')[1]
-        break
+      // Remove ANSI color codes for easier parsing
+      const cleanLine = line.replace(/\x1B\[[0-9;]*[mK]/g, '').replace(/\x1A\x2K/g, '')
+      
+      if (cleanLine.includes('SOC ')) {
+        const socMatch = cleanLine.match(/SOC\s+([0-9]+)/)
+        if (socMatch) {
+          data.stateOfCharge = parseInt(socMatch[1])
+          debug('Found SOC in output', { line: cleanLine, stateOfCharge: data.stateOfCharge })
+        }
+      } else if (cleanLine.includes('Consumption ')) {
+        const consumptionMatch = cleanLine.match(/Consumption\s+([0-9.]+)/)
+        if (consumptionMatch) {
+          data.consumption = parseFloat(consumptionMatch[1])
+          debug('Found consumption in output', { line: cleanLine, consumption: data.consumption })
+        }
+      } else if (cleanLine.includes('Capacity ') && cleanLine.includes('kWh')) {
+        const capacityMatch = cleanLine.match(/Capacity\s+([0-9.]+)\s+kWh/)
+        if (capacityMatch) {
+          data.capacity = parseFloat(capacityMatch[1])
+          debug('Found capacity in output', { line: cleanLine, capacity: data.capacity })
+        }
+      } else if (cleanLine.includes('IsCharging:')) {
+        const chargingMatch = cleanLine.match(/IsCharging:\s*(true|false)/)
+        if (chargingMatch) {
+          data.isCharging = chargingMatch[1] === 'true'
+          debug('Found charging status in output', { line: cleanLine, isCharging: data.isCharging })
+        }
+      } else if (cleanLine.includes('AllData')) {
+        // Try to parse JSON output
+        try {
+          const jsonMatch = cleanLine.match(/AllData\s+(.+)/)
+          if (jsonMatch) {
+            const parsedData = JSON.parse(jsonMatch[1])
+            data = { ...data, ...parsedData }
+            debug('Parsed JSON data', parsedData)
+          }
+        } catch (e) {
+          debug('Failed to parse JSON data', { error: e.message, line: cleanLine })
+        }
       }
     }
+    
   } catch (e) {
-    console.log('Error getting SOC', e)
+    debug('Error executing unified inverter data test', e)
+    console.log('Error getting unified inverter data', e)
+    
+    // Send error email with comprehensive details
+    await Email.sendErrorEmail('Playwright Script Error', e.message, {
+      script: 'getAllInverterData.test.js',
+      operation: 'Getting all inverter data',
+      stackTrace: e.stack,
+      systemInfo: {
+        timestamp: new Date().toISOString(),
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch
+      },
+      environment: {
+        DEBUG: process.env.DEBUG,
+        inverterIP: process.env.inverterIP,
+        OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED
+      }
+    })
   }
 
-  console.log('Got SOC', stateOfCharge)
+  debug('Final unified data result', data)
+  console.log('Got unified data:', JSON.stringify(data, null, 2))
+  return data
+}
 
-  return stateOfCharge
+
+// Legacy functions - kept for backward compatibility but recommend using getAllInverterData()
+exports.getStateOfCharge = async function () {
+  debug('Getting SOC via legacy method - consider using getAllInverterData()')
+  try {
+    const data = await exports.getAllInverterData()
+    return data.stateOfCharge
+  } catch (e) {
+    await Email.sendErrorEmail('Legacy SOC Error', e.message, {
+      script: 'getStateOfCharge (legacy)',
+      operation: 'Getting state of charge',
+      stackTrace: e.stack
+    })
+    throw e
+  }
+}
+
+exports.getCurrentConsumption = async function () {
+  debug('Getting consumption via legacy method - consider using getAllInverterData()')
+  try {
+    const data = await exports.getAllInverterData()
+    return data.consumption
+  } catch (e) {
+    await Email.sendErrorEmail('Legacy Consumption Error', e.message, {
+      script: 'getCurrentConsumption (legacy)',
+      operation: 'Getting current consumption',
+      stackTrace: e.stack
+    })
+    throw e
+  }
+}
+
+exports.getBatteryCapacity = async function () {
+  debug('Getting capacity via legacy method - consider using getAllInverterData()')
+  try {
+    const data = await exports.getAllInverterData()
+    return data.capacity
+  } catch (e) {
+    await Email.sendErrorEmail('Legacy Capacity Error', e.message, {
+      script: 'getBatteryCapacity (legacy)',
+      operation: 'Getting battery capacity',
+      stackTrace: e.stack
+    })
+    throw e
+  }
 }
