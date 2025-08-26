@@ -11,6 +11,7 @@ const exec = util.promisify(require('child_process').exec)
 const args = process.argv.slice(2)
 const FORCE_OCTOPUS_GO_WINDOW = args.includes('--force-window') || args.includes('-f')
 const SHOW_HELP = args.includes('--help') || args.includes('-h')
+const RUN_ONCE = args.includes('--once') || args.includes('-o')
 
 // Show help and exit if requested
 if (SHOW_HELP) {
@@ -21,14 +22,17 @@ Usage: node server.js [options]
 
 Options:
   -f, --force-window    Force the system to act as if it's within the Octopus Go time window
+  -o, --once           Run once and exit (default: run continuously)
   -h, --help           Show this help message
 
 Environment Variables:
-  DEBUG=true           Enable detailed debug logging
-  OCTOPUS_GO_ENABLED   Enable Octopus Go mode (true/false)
+  DEBUG=true                Enable detailed debug logging
+  OCTOPUS_GO_ENABLED        Enable Octopus Go mode (true/false)
+  CHECK_INTERVAL_MINUTES    Minutes between checks (default: 5)
   
 Examples:
-  node server.js                    # Normal operation
+  node server.js                    # Continuous operation (default)
+  node server.js --once             # Run once and exit
   node server.js --force-window     # Test charging logic outside normal hours
   DEBUG=true node server.js         # Run with debug logging
 `)
@@ -47,6 +51,34 @@ function debug(message, data = null) {
     }
   }
 }
+
+// Configuration
+const CHECK_INTERVAL_MINUTES = parseInt(process.env.CHECK_INTERVAL_MINUTES) || 5
+const CHECK_INTERVAL_MS = CHECK_INTERVAL_MINUTES * 60 * 1000
+
+// Signal handling for graceful shutdown
+let isShuttingDown = false
+let currentTimeout = null
+
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return
+  isShuttingDown = true
+  
+  console.log(`\n🛑 Received ${signal}, shutting down gracefully...`)
+  
+  if (currentTimeout) {
+    clearTimeout(currentTimeout)
+    debug('Cleared scheduled timeout')
+  }
+  
+  console.log('✅ SMA Octopus system stopped')
+  process.exit(0)
+}
+
+// Handle various termination signals
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))   // Ctrl+C
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM')) // Termination request
+process.on('SIGHUP', () => gracefulShutdown('SIGHUP'))   // Terminal closed
 
 // State tracking
 let currentChargingState = false
@@ -304,36 +336,82 @@ debug('System starting up')
 debug('Debug mode enabled:', DEBUG)
 loadState()
 
-// Run main function
-debug('Starting main execution')
-main().catch(async (error) => {
-  debug('Main function error', error)
-  console.error(error)
+// Function to schedule next execution
+function scheduleNextRun() {
+  if (isShuttingDown) return
   
-  // Send error email for main function failures
+  const nextRunTime = new Date(Date.now() + CHECK_INTERVAL_MS)
+  debug('Scheduling next run', { 
+    intervalMinutes: CHECK_INTERVAL_MINUTES,
+    nextRunTime: nextRunTime.toLocaleString() 
+  })
+  
+  currentTimeout = setTimeout(() => {
+    if (!isShuttingDown) {
+      runMainLoop()
+    }
+  }, CHECK_INTERVAL_MS)
+}
+
+// Main execution loop
+async function runMainLoop() {
+  if (isShuttingDown) return
+  
   try {
-    await Email.sendErrorEmail('System Error', error.message, {
-      script: 'server.js',
-      operation: 'Main execution loop',
-      stackTrace: error.stack,
-      systemInfo: {
-        timestamp: new Date().toISOString(),
-        nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch,
-        uptime: process.uptime()
-      },
-      environment: {
-        DEBUG: process.env.DEBUG,
-        inverterIP: process.env.inverterIP,
-        OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
-        OCTOPUS_GO_START_TIME: process.env.OCTOPUS_GO_START_TIME,
-        OCTOPUS_GO_END_TIME: process.env.OCTOPUS_GO_END_TIME,
-        OCTOPUS_GO_TARGET_SOC: process.env.OCTOPUS_GO_TARGET_SOC,
-        EMAIL_ENABLED: process.env.EMAIL_ENABLED
-      }
-    })
-  } catch (emailError) {
-    console.error('Failed to send error email:', emailError)
+    debug('Starting main execution')
+    await main()
+    debug('Main execution completed successfully')
+    
+    if (!RUN_ONCE && !isShuttingDown) {
+      console.log(`⏰ Next check scheduled in ${CHECK_INTERVAL_MINUTES} minutes`)
+      scheduleNextRun()
+    }
+    
+  } catch (error) {
+    debug('Main function error', error)
+    console.error('❌ Error in main execution:', error.message)
+    
+    // Send error email for main function failures
+    try {
+      await Email.sendErrorEmail('System Error', error.message, {
+        script: 'server.js',
+        operation: 'Main execution loop',
+        stackTrace: error.stack,
+        systemInfo: {
+          timestamp: new Date().toISOString(),
+          nodeVersion: process.version,
+          platform: process.platform,
+          arch: process.arch,
+          uptime: process.uptime()
+        },
+        environment: {
+          DEBUG: process.env.DEBUG,
+          inverterIP: process.env.inverterIP,
+          OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
+          OCTOPUS_GO_START_TIME: process.env.OCTOPUS_GO_START_TIME,
+          OCTOPUS_GO_END_TIME: process.env.OCTOPUS_GO_END_TIME,
+          OCTOPUS_GO_TARGET_SOC: process.env.OCTOPUS_GO_TARGET_SOC,
+          EMAIL_ENABLED: process.env.EMAIL_ENABLED
+        }
+      })
+    } catch (emailError) {
+      console.error('Failed to send error email:', emailError)
+    }
+    
+    if (!RUN_ONCE && !isShuttingDown) {
+      console.log(`⏰ Retrying in ${CHECK_INTERVAL_MINUTES} minutes despite error`)
+      scheduleNextRun()
+    }
   }
-})
+}
+
+// Start the system
+console.log('🔋 SMA Octopus Battery Management System')
+console.log(`📊 Mode: ${RUN_ONCE ? 'Single run' : 'Continuous operation'}`)
+if (!RUN_ONCE) {
+  console.log(`⏰ Check interval: ${CHECK_INTERVAL_MINUTES} minutes`)
+  console.log(`🛑 Press Ctrl+C to stop`)
+}
+
+debug('Starting initial execution')
+runMainLoop()
