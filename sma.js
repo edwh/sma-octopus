@@ -44,6 +44,7 @@ exports.getAllInverterData = async function () {
         
         const lines = stdout.split('\n')
         let socResult = { stateOfCharge: null, isCharging: null, capacity: null }
+        let dataFound = false
         
         for (const line of lines) {
           const cleanLine = line.replace(/\x1B\[[0-9;]*[mK]/g, '').replace(/\x1A\x2K/g, '')
@@ -70,6 +71,7 @@ exports.getAllInverterData = async function () {
                 const parsedData = JSON.parse(jsonString)
                 socResult = { ...socResult, ...parsedData }
                 debug('Parsed SMA inverter data', parsedData)
+                dataFound = true
               }
             } catch (e) {
               debug('Failed to parse SMA JSON data', { error: e.message, line: cleanLine })
@@ -77,7 +79,65 @@ exports.getAllInverterData = async function () {
           }
         }
         
+        // Check if we got critical data (SOC)
+        if (!dataFound || socResult.stateOfCharge === null) {
+          debug('Failed to extract SOC from SMA inverter - sending alert email')
+          
+          // Send alert email for SMA inverter failure
+          Email.sendErrorEmail('SMA Inverter Data Collection Failed', 
+            'Failed to retrieve battery state of charge from SMA inverter interface', 
+            {
+              script: 'getAllInverterData.test.js',
+              operation: 'Getting battery SOC from SMA inverter',
+              extractedData: socResult,
+              stdoutLength: stdout.length,
+              stderrLength: stderr.length,
+              timestamp: new Date().toISOString(),
+              severity: 'HIGH',
+              impact: 'Battery SOC not available - may affect charging decisions',
+              troubleshooting: [
+                'Check SMA inverter is accessible at ' + (process.env.inverterIP || 'unknown IP'),
+                'Verify installer password is correct',
+                'Check if SMA interface is responding',
+                'Review Playwright test logs for connection issues'
+              ]
+            }
+          ).catch(emailError => {
+            debug('Failed to send SMA inverter alert email', { error: emailError.message })
+          })
+          
+          console.log('⚠️ WARNING: Failed to get battery SOC from SMA inverter')
+        }
+        
         return socResult
+      }).catch(error => {
+        debug('SMA inverter collection failed completely', { error: error.message })
+        
+        // Send critical alert email for complete SMA failure
+        Email.sendErrorEmail('SMA Inverter Collection Critical Failure', 
+          'Complete failure to connect to or extract data from SMA inverter', 
+          {
+            script: 'getAllInverterData.test.js',
+            operation: 'SMA inverter data collection',
+            error: error.message,
+            stackTrace: error.stack,
+            timestamp: new Date().toISOString(),
+            severity: 'CRITICAL',
+            impact: 'No battery data available - charging system may not function correctly',
+            troubleshooting: [
+              'Check SMA inverter network connectivity',
+              'Verify inverter IP address: ' + (process.env.inverterIP || 'not set'),
+              'Check installer credentials',
+              'Verify SMA inverter is powered on and responding',
+              'Check firewall/network access to inverter'
+            ]
+          }
+        ).catch(emailError => {
+          debug('Failed to send SMA critical alert email', { error: emailError.message })
+        })
+        
+        console.log('❌ CRITICAL: Complete failure to access SMA inverter')
+        return { stateOfCharge: null, isCharging: null, capacity: null }
       }),
       
       // Get current power values from Sunny Portal
@@ -94,6 +154,7 @@ exports.getAllInverterData = async function () {
           purchasedElectricity: null,
           batteryCharging: null
         }
+        let powerValuesFound = 0
         
         // Look for current status values in Sunny Portal output
         for (const line of lines) {
@@ -105,42 +166,49 @@ exports.getAllInverterData = async function () {
             if (match) {
               portalResult.pvGeneration = parseFloat(match[1])
               debug('Found PV generation in Sunny Portal', { pvGeneration: portalResult.pvGeneration })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('Found total consumption:')) {
             const match = cleanLine.match(/Found total consumption:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.consumption = parseFloat(match[1])
               debug('Found consumption in Sunny Portal', { consumption: portalResult.consumption })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('Found battery charging:')) {
             const match = cleanLine.match(/Found battery charging:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.batteryCharging = parseFloat(match[1])
               debug('Found battery charging in Sunny Portal', { batteryCharging: portalResult.batteryCharging })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('✅ PV Generation:')) {
             const match = cleanLine.match(/PV Generation:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.pvGeneration = parseFloat(match[1])
               debug('Found PV generation in Sunny Portal (new format)', { pvGeneration: portalResult.pvGeneration })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('✅ Total Consumption:') || cleanLine.includes('✅ Consumption (')) {
             const match = cleanLine.match(/(?:Total )?Consumption[^:]*:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.consumption = parseFloat(match[1])
               debug('Found consumption in Sunny Portal (new format)', { consumption: portalResult.consumption })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('✅ Purchased Electricity:')) {
             const match = cleanLine.match(/Purchased Electricity:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.purchasedElectricity = parseFloat(match[1])
               debug('Found purchased electricity in Sunny Portal', { purchasedElectricity: portalResult.purchasedElectricity })
+              powerValuesFound++
             }
           } else if (cleanLine.includes('✅ Battery Charging:')) {
             const match = cleanLine.match(/Battery Charging:\s*([0-9.]+)\s*W/)
             if (match) {
               portalResult.batteryCharging = parseFloat(match[1])
               debug('Found battery charging in Sunny Portal (new format)', { batteryCharging: portalResult.batteryCharging })
+              powerValuesFound++
             }
           }
           
@@ -150,18 +218,21 @@ exports.getAllInverterData = async function () {
           if (pvMatch && !portalResult.pvGeneration) {
             portalResult.pvGeneration = parseFloat(pvMatch[1]) * 1000 // Convert kW to W
             debug('Found PV generation from page text', { pvGeneration: portalResult.pvGeneration })
+            powerValuesFound++
           }
           
           const consumptionMatch = cleanLine.match(/Total consumption.*?([0-9.]+)\s*kW/i)
           if (consumptionMatch && !portalResult.consumption) {
             portalResult.consumption = parseFloat(consumptionMatch[1]) * 1000 // Convert kW to W
             debug('Found consumption from page text', { consumption: portalResult.consumption })
+            powerValuesFound++
           }
           
           const batteryMatch = cleanLine.match(/Battery charging.*?([0-9.]+)\s*kW/i)
           if (batteryMatch && !portalResult.batteryCharging) {
             portalResult.batteryCharging = parseFloat(batteryMatch[1]) * 1000 // Convert kW to W
             debug('Found battery charging from page text', { batteryCharging: portalResult.batteryCharging })
+            powerValuesFound++
           }
           
           const feedInMatch = cleanLine.match(/Grid feed-in.*?([0-9.]+)\s*kW/i)
@@ -180,7 +251,70 @@ exports.getAllInverterData = async function () {
           debug('Calculated purchased electricity', { purchasedElectricity: portalResult.purchasedElectricity })
         }
         
+        // Check if we got sufficient power data from Sunny Portal
+        if (powerValuesFound < 2 || (!portalResult.pvGeneration && !portalResult.consumption)) {
+          debug('Insufficient power data from Sunny Portal - sending alert email')
+          
+          // Send alert email for Sunny Portal data failure
+          Email.sendErrorEmail('Sunny Portal Data Collection Failed', 
+            'Failed to retrieve sufficient current power values from Sunny Portal', 
+            {
+              script: 'getForecastData.test.js',
+              operation: 'Getting current power values from Sunny Portal',
+              extractedData: portalResult,
+              powerValuesFound: powerValuesFound,
+              stdoutLength: stdout.length,
+              stderrLength: stderr.length,
+              timestamp: new Date().toISOString(),
+              severity: 'MEDIUM',
+              impact: 'Current power values not available - display will show N/A for some values',
+              troubleshooting: [
+                'Check Sunny Portal credentials are correct',
+                'Verify Sunny Portal URL: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
+                'Check if Sunny Portal website is accessible',
+                'Verify OAuth authentication is working',
+                'Check if Current Status page is loading properly',
+                'Review page content extraction logic'
+              ]
+            }
+          ).catch(emailError => {
+            debug('Failed to send Sunny Portal alert email', { error: emailError.message })
+          })
+          
+          console.log('⚠️ WARNING: Insufficient current power data from Sunny Portal')
+        }
+        
         return portalResult
+      }).catch(error => {
+        debug('Sunny Portal collection failed completely', { error: error.message })
+        
+        // Send critical alert email for complete Sunny Portal failure
+        Email.sendErrorEmail('Sunny Portal Collection Critical Failure', 
+          'Complete failure to connect to or extract data from Sunny Portal', 
+          {
+            script: 'getForecastData.test.js',
+            operation: 'Sunny Portal data collection',
+            error: error.message,
+            stackTrace: error.stack,
+            timestamp: new Date().toISOString(),
+            severity: 'HIGH',
+            impact: 'No current power values or forecast data available',
+            troubleshooting: [
+              'Check internet connectivity',
+              'Verify Sunny Portal website is accessible: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
+              'Check Sunny Portal credentials',
+              'Verify username: ' + (process.env.SUNNY_PORTAL_USERNAME || 'not set'),
+              'Check if Sunny Portal service is down',
+              'Review network firewall settings',
+              'Check Playwright browser configuration'
+            ]
+          }
+        ).catch(emailError => {
+          debug('Failed to send Sunny Portal critical alert email', { error: emailError.message })
+        })
+        
+        console.log('❌ ERROR: Complete failure to access Sunny Portal')
+        return { pvGeneration: null, consumption: null, purchasedElectricity: null, batteryCharging: null }
       })
     ])
     
@@ -353,11 +487,24 @@ exports.getForecastedGeneration = async function () {
     debug('Error executing forecast test', e)
     console.log('Error getting forecast data:', e.message)
     
-    // Send error email
-    await Email.sendErrorEmail('Sunny Portal Forecast Error', e.message, {
+    // Send error email with enhanced troubleshooting
+    await Email.sendErrorEmail('Sunny Portal Forecast Data Collection Failed', e.message, {
       script: 'getForecastData.test.js',
-      operation: 'Getting forecast generation',
+      operation: 'Getting solar generation forecast from Sunny Portal',
+      error: e.message,
       stackTrace: e.stack,
+      timestamp: new Date().toISOString(),
+      severity: 'MEDIUM',
+      impact: 'Solar forecast not available - charging decisions will use standard target SOC without forecast optimization',
+      troubleshooting: [
+        'Check Sunny Portal login credentials',
+        'Verify Sunny Portal URL: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
+        'Check if Current Status and Forecast page is accessible',
+        'Verify forecast data is available on Sunny Portal',
+        'Check if forecast chart/data is loading properly',
+        'Review JavaScript data extraction logic',
+        'Verify network connectivity to Sunny Portal'
+      ],
       systemInfo: {
         timestamp: new Date().toISOString(),
         nodeVersion: process.version,
@@ -367,12 +514,14 @@ exports.getForecastedGeneration = async function () {
       environment: {
         DEBUG: process.env.DEBUG,
         SUNNY_PORTAL_URL: process.env.SUNNY_PORTAL_URL,
-        SUNNY_PORTAL_USERNAME: process.env.SUNNY_PORTAL_USERNAME ? 'SET' : 'NOT_SET'
+        SUNNY_PORTAL_USERNAME: process.env.SUNNY_PORTAL_USERNAME ? 'SET' : 'NOT_SET',
+        SUNNY_PORTAL_FORECAST_MULTIPLIER: process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100'
       }
     })
     
     // Return 0 as a safe fallback
     debug('Returning 0 forecast as fallback due to error')
+    console.log('⚠️ WARNING: Using fallback forecast of 0 kWh due to data collection failure')
     return 0
   }
 }
