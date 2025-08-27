@@ -358,7 +358,61 @@ async function main () {
   debug('shouldCharge decision made', chargeDecision)
 
   const { shouldCharge, forecastData } = chargeDecision
-  console.log('State of charge:', stateOfCharge, '% | Current consumption:', currentConsumption, 'W | Currently charging:', currentChargingState, '| Forecast:', forecastedGeneration !== null ? forecastedGeneration + ' kWh' : 'N/A', '| Should charge:', shouldCharge)
+  
+  // Enhanced formatted output with icons
+  console.log('\n🔋 BATTERY MANAGEMENT STATUS')
+  console.log('═'.repeat(50))
+  
+  // Battery status with icon based on SOC level
+  let batteryIcon = '🔴' // Low battery
+  if (stateOfCharge >= 80) batteryIcon = '🟢' // High battery
+  else if (stateOfCharge >= 50) batteryIcon = '🟡' // Medium battery
+  else if (stateOfCharge >= 20) batteryIcon = '🟠' // Low-medium battery
+  
+  console.log(`${batteryIcon} Battery SOC: ${stateOfCharge}%`)
+  
+  if (currentCapacity) {
+    console.log(`📦 Battery Capacity: ${currentCapacity} kWh`)
+  }
+  
+  // Power consumption with icon
+  const consumptionIcon = currentConsumption > 2000 ? '⚡' : currentConsumption > 1000 ? '💡' : '🏠'
+  console.log(`${consumptionIcon} Current Consumption: ${currentConsumption !== null ? currentConsumption + ' W' : 'N/A'}`)
+  
+  // PV Generation status
+  if (inverterData.pvGeneration !== null) {
+    const pvIcon = inverterData.pvGeneration > 1000 ? '☀️' : inverterData.pvGeneration > 0 ? '🌤️' : '🌙'
+    console.log(`${pvIcon} PV Generation: ${inverterData.pvGeneration} W`)
+  }
+  
+  // Charging status with appropriate icon
+  const chargingIcon = currentChargingState ? '🔌' : '🔋'
+  const chargingText = currentChargingState ? 'YES' : 'NO'
+  console.log(`${chargingIcon} Currently Charging: ${chargingText}`)
+  
+  // Forecast information with weather-appropriate icon
+  const forecastIcon = forecastedGeneration !== null ? (forecastedGeneration > 5 ? '☀️' : forecastedGeneration > 1 ? '⛅' : '☁️') : '❓'
+  console.log(`${forecastIcon} Solar Forecast: ${forecastedGeneration !== null ? forecastedGeneration.toFixed(1) + ' kWh' : 'N/A'}`)
+  
+  // Enhanced decision display
+  if (forecastData && forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
+    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}% → ${forecastData.adjustedTargetSOC}% (forecast adjusted)`)
+  } else if (forecastData && forecastData.originalTargetSOC) {
+    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}%`)
+  }
+  
+  // Time window information
+  if (process.env.OCTOPUS_GO_ENABLED === 'true') {
+    const windowIcon = FORCE_OCTOPUS_GO_WINDOW ? '🔧' : '⏰'
+    const windowText = FORCE_OCTOPUS_GO_WINDOW ? 'FORCED WINDOW MODE' : 'Normal operation'
+    console.log(`${windowIcon} Octopus Go: ${windowText}`)
+  }
+  
+  // Final decision with prominent icon
+  const decisionIcon = shouldCharge ? '🟢' : '🔴'
+  const decisionText = shouldCharge ? 'START CHARGING' : 'STOP/CONTINUE NO CHARGING'
+  console.log(`\n${decisionIcon} DECISION: ${decisionText}`)
+  console.log('═'.repeat(50))
 
   debug('Calling setCharge with decision and forecast data', { shouldCharge, stateOfCharge, forecastData })
   await setCharge(shouldCharge, stateOfCharge, currentChargingState, currentCapacity, forecastData)

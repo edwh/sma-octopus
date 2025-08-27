@@ -31,12 +31,18 @@ exports.getAllInverterData = async function () {
   }
   
   try {
-    debug('Starting parallel data collection: SOC from SMA inverter + current status from Sunny Portal')
+    debug('Starting sequential data collection: SOC from SMA inverter first, then current status from Sunny Portal')
     
-    // Run both data collection tasks in parallel for better performance
-    const [socData, sunnyPortalData] = await Promise.all([
-      // Get SOC from SMA inverter
-      exec('npx playwright test getAllInverterData.test.js').then(({stdout, stderr}) => {
+    // Get SOC from SMA inverter first with retry logic
+    debug('Step 1: Getting SOC from SMA inverter...')
+    let socData = null
+    const maxRetries = 3
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        debug(`SMA inverter attempt ${attempt}/${maxRetries}`)
+        
+        socData = await exec('npx playwright test getAllInverterData.test.js').then(({stdout, stderr}) => {
         debug('SMA inverter SOC collection completed', {
           stdoutLength: stdout.length,
           stderrLength: stderr.length
@@ -110,38 +116,67 @@ exports.getAllInverterData = async function () {
         }
         
         return socResult
-      }).catch(error => {
-        debug('SMA inverter collection failed completely', { error: error.message })
-        
-        // Send critical alert email for complete SMA failure
-        Email.sendErrorEmail('SMA Inverter Collection Critical Failure', 
-          'Complete failure to connect to or extract data from SMA inverter', 
-          {
-            script: 'getAllInverterData.test.js',
-            operation: 'SMA inverter data collection',
-            error: error.message,
-            stackTrace: error.stack,
-            timestamp: new Date().toISOString(),
-            severity: 'CRITICAL',
-            impact: 'No battery data available - charging system may not function correctly',
-            troubleshooting: [
-              'Check SMA inverter network connectivity',
-              'Verify inverter IP address: ' + (process.env.inverterIP || 'not set'),
-              'Check installer credentials',
-              'Verify SMA inverter is powered on and responding',
-              'Check firewall/network access to inverter'
-            ]
-          }
-        ).catch(emailError => {
-          debug('Failed to send SMA critical alert email', { error: emailError.message })
         })
         
-        console.log('❌ CRITICAL: Complete failure to access SMA inverter')
-        return { stateOfCharge: null, isCharging: null, capacity: null }
-      }),
-      
-      // Get current power values from Sunny Portal
-      exec('npx playwright test getForecastData.test.js').then(({stdout, stderr}) => {
+        // Check if we got critical data (SOC)
+        if (socData && socData.stateOfCharge !== null) {
+          debug(`✅ SMA inverter success on attempt ${attempt}`, { soc: socData.stateOfCharge })
+          break
+        } else {
+          throw new Error(`No SOC data extracted on attempt ${attempt}`)
+        }
+        
+      } catch (error) {
+        debug(`❌ SMA inverter attempt ${attempt} failed`, { error: error.message })
+        
+        if (attempt === maxRetries) {
+          // Final attempt failed - send critical alert email
+          debug('All SMA inverter attempts failed - sending critical alert')
+          
+          Email.sendErrorEmail('SMA Inverter Collection Critical Failure', 
+            `Failed to get data from SMA inverter after ${maxRetries} attempts`, 
+            {
+              script: 'getAllInverterData.test.js',
+              operation: 'SMA inverter data collection with retries',
+              error: error.message,
+              stackTrace: error.stack,
+              attempts: maxRetries,
+              timestamp: new Date().toISOString(),
+              severity: 'CRITICAL',
+              impact: 'No battery data available - charging system may not function correctly',
+              troubleshooting: [
+                'Check SMA inverter network connectivity',
+                'Verify inverter IP address: ' + (process.env.inverterIP || 'not set'),
+                'Check installer credentials',
+                'Verify SMA inverter is powered on and responding',
+                'Check firewall/network access to inverter',
+                'Review Playwright test execution logs',
+                'Consider increasing retry count or timeout values'
+              ]
+            }
+          ).catch(emailError => {
+            debug('Failed to send SMA critical alert email', { error: emailError.message })
+          })
+          
+          console.log(`❌ CRITICAL: Complete failure to access SMA inverter after ${maxRetries} attempts`)
+          socData = { stateOfCharge: null, isCharging: null, capacity: null }
+        } else {
+          // Wait before retry
+          console.log(`⚠️ SMA inverter attempt ${attempt} failed, retrying in 5 seconds...`)
+          await new Promise(resolve => setTimeout(resolve, 5000))
+        }
+      }
+    }
+    
+    debug('Step 2: Getting current status from Sunny Portal...')
+    let sunnyPortalData = null
+    const maxPortalRetries = 3
+    
+    for (let attempt = 1; attempt <= maxPortalRetries; attempt++) {
+      try {
+        debug(`Sunny Portal attempt ${attempt}/${maxPortalRetries}`)
+        
+        sunnyPortalData = await exec('npx playwright test getForecastData.test.js').then(({stdout, stderr}) => {
         debug('Sunny Portal data collection completed', {
           stdoutLength: stdout.length,
           stderrLength: stderr.length
@@ -285,39 +320,68 @@ exports.getAllInverterData = async function () {
         }
         
         return portalResult
-      }).catch(error => {
-        debug('Sunny Portal collection failed completely', { error: error.message })
-        
-        // Send critical alert email for complete Sunny Portal failure
-        Email.sendErrorEmail('Sunny Portal Collection Critical Failure', 
-          'Complete failure to connect to or extract data from Sunny Portal', 
-          {
-            script: 'getForecastData.test.js',
-            operation: 'Sunny Portal data collection',
-            error: error.message,
-            stackTrace: error.stack,
-            timestamp: new Date().toISOString(),
-            severity: 'HIGH',
-            impact: 'No current power values or forecast data available',
-            troubleshooting: [
-              'Check internet connectivity',
-              'Verify Sunny Portal website is accessible: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
-              'Check Sunny Portal credentials',
-              'Verify username: ' + (process.env.SUNNY_PORTAL_USERNAME || 'not set'),
-              'Check if Sunny Portal service is down',
-              'Review network firewall settings',
-              'Check Playwright browser configuration'
-            ]
-          }
-        ).catch(emailError => {
-          debug('Failed to send Sunny Portal critical alert email', { error: emailError.message })
         })
         
-        console.log('❌ ERROR: Complete failure to access Sunny Portal')
-        return { pvGeneration: null, consumption: null, purchasedElectricity: null, batteryCharging: null }
-      })
-    ])
+        // Check if we got sufficient power data from Sunny Portal
+        const powerValuesCount = [
+          sunnyPortalData.pvGeneration,
+          sunnyPortalData.consumption,
+          sunnyPortalData.purchasedElectricity,
+          sunnyPortalData.batteryCharging
+        ].filter(val => val !== null).length
+        
+        if (powerValuesCount >= 1) { // At least one power value is sufficient
+          debug(`✅ Sunny Portal success on attempt ${attempt}`, { powerValues: powerValuesCount })
+          break
+        } else {
+          throw new Error(`Insufficient power data from Sunny Portal on attempt ${attempt}`)
+        }
+        
+      } catch (error) {
+        debug(`❌ Sunny Portal attempt ${attempt} failed`, { error: error.message })
+        
+        if (attempt === maxPortalRetries) {
+          // Final attempt failed - send alert email
+          debug('All Sunny Portal attempts failed - sending alert')
+          
+          Email.sendErrorEmail('Sunny Portal Collection Critical Failure', 
+            `Failed to get data from Sunny Portal after ${maxPortalRetries} attempts`, 
+            {
+              script: 'getForecastData.test.js',
+              operation: 'Sunny Portal data collection with retries',
+              error: error.message,
+              stackTrace: error.stack,
+              attempts: maxPortalRetries,
+              timestamp: new Date().toISOString(),
+              severity: 'HIGH',
+              impact: 'No current power values or forecast data available',
+              troubleshooting: [
+                'Check internet connectivity',
+                'Verify Sunny Portal website is accessible: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
+                'Check Sunny Portal credentials',
+                'Verify username: ' + (process.env.SUNNY_PORTAL_USERNAME || 'not set'),
+                'Check if Sunny Portal service is down',
+                'Review network firewall settings',
+                'Check Playwright browser configuration',
+                'Consider increasing retry count or timeout values',
+                'Review page content extraction logic'
+              ]
+            }
+          ).catch(emailError => {
+            debug('Failed to send Sunny Portal critical alert email', { error: emailError.message })
+          })
+          
+          console.log(`❌ ERROR: Complete failure to access Sunny Portal after ${maxPortalRetries} attempts`)
+          sunnyPortalData = { pvGeneration: null, consumption: null, purchasedElectricity: null, batteryCharging: null }
+        } else {
+          // Wait before retry
+          console.log(`⚠️ Sunny Portal attempt ${attempt} failed, retrying in 10 seconds...`)
+          await new Promise(resolve => setTimeout(resolve, 10000))
+        }
+      }
+    }
     
+    debug('Step 3: Combining results from both data sources')
     // Combine the results - SOC from inverter, power values from Sunny Portal
     data = {
       stateOfCharge: socData.stateOfCharge,

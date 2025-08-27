@@ -331,154 +331,65 @@ exports.getAllInverterData = async function (page) {
   }
 
   try {
-    // Login once
-    await page.goto('http://' + process.env.inverterIP + '/#/login')
-    await page.selectOption('select[name="username"]', 'Installer')
-    await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-    await page.click('#bLogin')
-    await page.waitForTimeout(2000)
-
-    // Navigate to spot values
-    await page.click('#lSpotValues')
-    await page.waitForTimeout(3000)
-
-    console.log('=== EXTRACTING SOC FROM SMA INVERTER ===')
-
-    // Only get Battery SOC from inverter - other values will come from Sunny Portal
+    console.log('=== GETTING SOC AND CAPACITY FROM SMA INVERTER ONLY ===')
+    
+    // Get SOC from inverter
     try {
-      console.log(`--- Processing Battery section for SOC ---`)
+      console.log(`--- Getting SOC from inverter at ${process.env.inverterIP} ---`)
       
+      await page.goto('http://' + process.env.inverterIP + '/#/login', { timeout: 60000 })
+      
+      // Wait for dropdown and login
+      const userSelect = page.locator('select[name="username"]')
+      await page.waitForFunction(() => {
+        const select = document.querySelector('select[name="username"]')
+        return select && select.options.length > 1
+      }, { timeout: 70000 })
+      
+      await userSelect.selectOption({ label: 'Installer' })
+      await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
+      await page.click('#bLogin')
+      await page.waitForTimeout(3000)
+      
+      // Navigate to Spot Values
+      await page.click('#lSpotValues', { timeout: 30000 })
+      await page.waitForTimeout(5000)
+      
+      // Get SOC only from Battery section
       const batterySection = page.locator('span', { hasText: 'Battery' }).first()
       if (await batterySection.count() > 0) {
-        await batterySection.click()
-        await page.waitForTimeout(3000)
+        await batterySection.click({ timeout: 20000 })
+        await page.waitForTimeout(5000)
         
         const rows = await page.locator('tr').all()
-        console.log(`Found ${rows.length} rows in Battery section`)
-        
         for (const row of rows) {
           try {
             const rowText = await row.innerText()
-            const cleanText = rowText.replace(/\n/g, '\t').trim()
+            const cleanText = rowText.replace(/\s+/g, ' ').trim()
             
-            // Extract SOC: "State of charge	38 %"
             if (cleanText.includes('State of charge')) {
               const match = cleanText.match(/State of charge\s+(\d+)\s*%/)
               if (match) {
                 result.stateOfCharge = parseInt(match[1])
-                console.log(`✅ State of Charge: ${result.stateOfCharge}%`)
-                break // Found SOC, exit loop
+                console.log(`✅ SOC from inverter: ${result.stateOfCharge}%`)
+                break
               }
             }
           } catch (e) {
             // Skip problematic rows
           }
         }
-      } else {
-        console.log(`❌ Battery section not found`)
       }
+      
+      console.log(`✅ SOC extraction complete: ${result.stateOfCharge}%`)
+      
     } catch (e) {
-      console.log(`❌ Error getting SOC:`, e.message)
+      console.log(`❌ Could not get SOC from inverter: ${e.message}`)
     }
-
-    // Get charging status from Device Parameters (check the control parameter)
-    try {
-      console.log('--- Getting charging control status from Device Parameters ---')
-      await page.click('#lDeviceParameter')
-      await page.waitForTimeout(3000)
-      
-      // Find Battery section in Device Parameters
-      const batteryParamSection = page.locator('span', { hasText: 'Battery' }).first()
-      if (await batteryParamSection.count() > 0) {
-        await batteryParamSection.click()
-        await page.waitForTimeout(2000)
-        
-        // Look for Areas of application section
-        const applicationSection = page.locator('span', { hasText: 'Areas of application' }).first()
-        if (await applicationSection.count() > 0) {
-          // Find the self-consumption parameter that we control
-          const selfConsumption = page.locator('td', { hasText: 'Minimum width of self-consumption area' })
-          if (await selfConsumption.count() > 0) {
-            const selfConsumptionRow = await selfConsumption.locator('..').first()
-            const selfConsumptionInput = await selfConsumptionRow.locator('input').first()
-            
-            if (await selfConsumptionInput.count() > 0) {
-              const currentValue = await selfConsumptionInput.inputValue()
-              console.log('Self-consumption parameter value:', currentValue)
-              
-              // We set this to a low value (like "1") to force charging
-              // Normal/high values (like "95") mean not charging
-              const numValue = parseFloat(currentValue) || 95
-              result.isCharging = numValue < 50  // Low value = charging enabled
-              console.log(`✅ Forced charging: ${result.isCharging} (parameter value: ${numValue})`)
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.log('❌ Could not get charging status:', e.message)
-    }
-
-    // Get Battery Capacity from Device Parameters (if not already there)
-    try {
-      console.log('--- Getting battery capacity from Device Parameters ---')
-      
-      // We might already be on Device Parameters from charging status check
-      const currentUrl = page.url()
-      if (!currentUrl.includes('DeviceParameter')) {
-        await page.click('#lDeviceParameter')
-        await page.waitForTimeout(3000)
-      }
-      
-      // Find Battery section
-      const batteryCapSection = page.locator('span', { hasText: 'Battery' }).first()
-      if (await batteryCapSection.count() > 0) {
-        await batteryCapSection.click()
-        await page.waitForTimeout(2000)
-        
-        // Look for Rated capacity in the page content
-        const pageContent = await page.textContent('body')
-        const match = pageContent.match(/Rated capacity\s+([0-9,]+)\s*Wh/)
-        if (match) {
-          const whValue = parseFloat(match[1].replace(',', ''))
-          result.capacity = whValue / 1000  // Convert Wh to kWh
-          console.log(`✅ Battery capacity: ${result.capacity} kWh`)
-        } else {
-          console.log('❌ Could not find Rated capacity')
-        }
-      }
-    } catch (e) {
-      console.log('❌ Error getting capacity:', e.message)
-    }
-
-    // Calculate purchased electricity from AC power reading
-    // AC Power reading represents net flow from/to grid:
-    // - Negative AC power = consuming from grid (purchased electricity)
-    // - Positive AC power = feeding back to grid (export)
-    if (result.consumption !== null) {
-      // The first "Power" reading from AC Side shows net grid flow
-      // If we're consuming 4,622W total, that includes both house load and battery charging
-      // For Sunny Portal compatibility, we need to separate:
-      // - Total consumption = house load + battery charging
-      // - Purchased electricity = what we're drawing from grid
-      
-      // Simple approach: purchased electricity = portion of consumption not met by PV
-      const pvGeneration = result.pvGeneration || 0
-      const totalConsumption = result.consumption || 0
-      const batteryCharging = result.batteryCharging || 0
-      
-      // House consumption (excluding battery charging)
-      const houseLoad = totalConsumption - batteryCharging
-      
-      // Grid purchase = house load + battery charging - PV generation going to loads
-      const purchasedFromGrid = Math.max(0, totalConsumption - pvGeneration)
-      
-      result.purchasedElectricity = purchasedFromGrid
-      console.log(`✅ Energy breakdown - Total: ${totalConsumption}W, PV: ${pvGeneration}W, Battery: ${batteryCharging}W, House: ${houseLoad}W`)
-      console.log(`✅ Purchased electricity: ${result.purchasedElectricity} W`)
-    } else {
-      console.log('❌ Cannot calculate purchased electricity - missing consumption data')
-    }
+    
+    // Set reasonable battery capacity (this is configured, not dynamic)
+    result.capacity = 31.2 // kWh - adjust to your actual battery size
+    console.log(`✅ Using configured battery capacity: ${result.capacity} kWh`)
 
   } catch (e) {
     console.log('Error in getAllInverterData:', e.message)
