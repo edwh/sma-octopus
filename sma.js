@@ -187,7 +187,8 @@ exports.getAllInverterData = async function () {
           pvGeneration: null,
           consumption: null,
           purchasedElectricity: null,
-          batteryCharging: null
+          batteryCharging: null,
+          forceChargingWindows: null
         }
         let powerValuesFound = 0
         
@@ -244,6 +245,15 @@ exports.getAllInverterData = async function () {
               portalResult.batteryCharging = parseFloat(match[1])
               debug('Found battery charging in Sunny Portal (new format)', { batteryCharging: portalResult.batteryCharging })
               powerValuesFound++
+            }
+          } else if (cleanLine.includes('FORCE_CHARGE_WINDOWS_FOUND:')) {
+            const match = cleanLine.match(/FORCE_CHARGE_WINDOWS_FOUND:\s*(\d+)/)
+            if (match) {
+              portalResult.forceChargingWindows = parseInt(match[1])
+              debug('Found force charging windows count', { forceChargingWindows: portalResult.forceChargingWindows })
+            } else if (cleanLine.includes('ERROR')) {
+              debug('Error detected in force charging check')
+              portalResult.forceChargingWindows = null
             }
           }
           
@@ -382,15 +392,27 @@ exports.getAllInverterData = async function () {
     }
     
     debug('Step 3: Combining results from both data sources')
-    // Combine the results - SOC from inverter, power values from Sunny Portal
+    // Combine the results - SOC from inverter, power values and force charging state from Sunny Portal
+    // Use Portal force charging state if available, fallback to inverter charging state
+    const portalForceCharging = sunnyPortalData.forceChargingWindows !== null ? sunnyPortalData.forceChargingWindows > 0 : null
+    const finalChargingState = portalForceCharging !== null ? portalForceCharging : socData.isCharging
+    
+    debug('Charging state determination', {
+      inverterCharging: socData.isCharging,
+      portalWindowCount: sunnyPortalData.forceChargingWindows,
+      portalForceCharging: portalForceCharging,
+      finalChargingState: finalChargingState
+    })
+    
     data = {
       stateOfCharge: socData.stateOfCharge,
-      isCharging: socData.isCharging,
+      isCharging: finalChargingState,
       capacity: socData.capacity,
       pvGeneration: sunnyPortalData.pvGeneration,
       consumption: sunnyPortalData.consumption,
       purchasedElectricity: sunnyPortalData.purchasedElectricity,
-      batteryCharging: sunnyPortalData.batteryCharging
+      batteryCharging: sunnyPortalData.batteryCharging,
+      forceChargingWindows: sunnyPortalData.forceChargingWindows
     }
     
     debug('Combined hybrid data result', data)
@@ -588,4 +610,16 @@ exports.getForecastedGeneration = async function () {
     console.log('⚠️ WARNING: Using fallback forecast of 0 kWh due to data collection failure')
     return 0
   }
+}
+
+// Check if force charging is currently configured by looking for time windows
+// This is now integrated into the existing Sunny Portal data collection to avoid multiple logins
+exports.isForceChargingConfigured = async function() {
+  debug('Force charging state will be retrieved from existing Sunny Portal data collection')
+  debug('This function should not be called directly - charging state is included in getAllInverterData')
+  
+  // This function is kept for backward compatibility but should not be used
+  // The force charging detection is now integrated into the getForecastData.test.js
+  console.log('⚠️ Warning: isForceChargingConfigured() called directly - this is now integrated into getAllInverterData()')
+  return null
 }

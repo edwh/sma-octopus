@@ -8,7 +8,7 @@ module.exports = defineConfig({
   workers: 1,
   reporter: 'line', // Change to html to view the errors, but this will block execution.
   reportSlowTests: null,
-  timeout: 2 * 60 * 1000,  // On a Raspberry pi, this can take a while.
+  timeout: 5 * 60 * 1000,  // On a Raspberry pi, this can take a while. Extended for battery control.
   use: {
     trace: 'off',
   },

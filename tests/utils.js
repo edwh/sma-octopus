@@ -317,6 +317,65 @@ exports.getBatteryCapacity = async function (page) {
   return capacity
 }
 
+exports.checkChargingState = async function (page) {
+  await page.setViewportSize({width: 2048, height: 1536})
+
+  try {
+    console.log('=== CHECKING BATTERY CHARGING STATE FROM PARAMETERS ===')
+    
+    await page.goto('http://' + process.env.inverterIP + '/#/login', { timeout: 60000 })
+    
+    // Wait for dropdown and login
+    const userSelect = page.locator('select[name="username"]')
+    await page.waitForFunction(() => {
+      const select = document.querySelector('select[name="username"]')
+      return select && select.options.length > 1
+    }, { timeout: 70000 })
+    
+    await userSelect.selectOption({ label: 'Installer' })
+    await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
+    await page.click('#bLogin')
+    await page.waitForTimeout(3000)
+    
+    // Navigate to Device Parameters
+    console.log('Navigating to Device Parameters...')
+    await page.click('#lDeviceParameter', { timeout: 30000 })
+    
+    console.log('Clicking Parameter Edit...')
+    await page.click('#bParameterEdit', { timeout: 20000 })
+    
+    const batterySection = page.locator('span', {
+      hasText: 'Battery'
+    }).first()
+    await batterySection.click({ timeout: 15000 })
+    
+    // Look for the self-consumption parameter
+    console.log('Looking for self-consumption parameter...')
+    const selfConsumption = page.locator('td', {
+      hasText: 'Minimum width of self-consumption area'
+    })
+    
+    const selfConsumptionRow = await selfConsumption.locator('..').first()
+    const selfConsumptionInput = await selfConsumptionRow.locator('input').first()
+    
+    // Read the current value
+    const currentValue = await selfConsumptionInput.inputValue({ timeout: 20000 })
+    console.log(`Current self-consumption parameter value: "${currentValue}"`)
+    
+    // Determine if battery is in force charge mode
+    // Value "1" = Force charge mode
+    // Value "91" = Normal/stop charge mode
+    const isCharging = currentValue === '1'
+    console.log(`Battery charging state: ${isCharging ? 'CHARGING (force mode)' : 'NOT CHARGING (normal mode)'}`)
+    
+    return isCharging
+    
+  } catch (error) {
+    console.log('Error checking charging state:', error.message)
+    return null
+  }
+}
+
 exports.getAllInverterData = async function (page) {
   await page.setViewportSize({width: 2048, height: 1536})
   
@@ -390,6 +449,16 @@ exports.getAllInverterData = async function (page) {
     // Set reasonable battery capacity (this is configured, not dynamic)
     result.capacity = 31.2 // kWh - adjust to your actual battery size
     console.log(`✅ Using configured battery capacity: ${result.capacity} kWh`)
+    
+    // Check charging state by reading the self-consumption parameter
+    try {
+      console.log('--- Checking charging state from parameters ---')
+      result.isCharging = await exports.checkChargingState(page)
+      console.log(`✅ Charging state detected: ${result.isCharging}`)
+    } catch (e) {
+      console.log(`❌ Could not check charging state: ${e.message}`)
+      result.isCharging = null
+    }
 
   } catch (e) {
     console.log('Error in getAllInverterData:', e.message)
@@ -1369,5 +1438,30 @@ exports.getCurrentStatusFromSunnyPortal = async function (page) {
   } catch (error) {
     console.error('Error getting current status from Sunny Portal:', error.message)
     return result // Return partial results
+  }
+}
+
+exports.checkForceChargingFromSunnyPortal = async function (page) {
+  try {
+    console.log('🔍 Checking force charging windows on Sunny Portal...')
+    
+    // Go to Plant Formula Configuration page
+    await page.goto('https://www.sunnyportal.com/Templates/PlantFormulaConfiguration.aspx')
+    await page.waitForLoadState('networkidle', { timeout: 30000 })
+    await page.waitForTimeout(3000)
+    
+    // Check for existing charging windows
+    const removeButtons = page.locator('img[src="../Tools/images/buttons/remove_segment_btn.png"]')
+    const windowCount = await removeButtons.count()
+    
+    console.log('FORCE_CHARGE_WINDOWS_FOUND:', windowCount)
+    console.log(`✅ Force charging check: ${windowCount} time windows found - Force charging is ${windowCount > 0 ? 'ON' : 'OFF'}`)
+    
+    return windowCount
+    
+  } catch (error) {
+    console.error('Error checking force charge state:', error.message)
+    console.log('FORCE_CHARGE_WINDOWS_FOUND: ERROR')
+    throw error
   }
 }

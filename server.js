@@ -138,7 +138,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Starting to charge
     debug('Starting battery charging process')
     try {
-      const {stdout, stderr} = await exec('npx playwright test batteryOn.test.js')
+      const {stdout, stderr} = await exec('FORCE_CHARGE=on npx playwright test tests/simpleBatteryControl.test.js')
       console.log('Starting battery charging...', stdout, stderr)
       debug('Battery charging command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
     } catch (error) {
@@ -147,7 +147,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery On Script Error', error.message, {
-        script: 'batteryOn.test.js',
+        script: 'tests/simpleBatteryControl.test.js (FORCE_CHARGE=on)',
         operation: 'Starting battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
@@ -196,7 +196,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Stopping charge
     debug('Stopping battery charging process')
     try {
-      const {stdout, stderr} = await exec('npx playwright test batteryOff.test.js')
+      const {stdout, stderr} = await exec('FORCE_CHARGE=off npx playwright test tests/simpleBatteryControl.test.js')
       console.log('Stopping battery charging...', stdout, stderr)
       debug('Battery stop command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
     } catch (error) {
@@ -205,7 +205,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery Off Script Error', error.message, {
-        script: 'batteryOff.test.js',
+        script: 'tests/simpleBatteryControl.test.js (FORCE_CHARGE=off)',
         operation: 'Stopping battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
@@ -326,7 +326,12 @@ async function main () {
   const inverterData = await SMA.getAllInverterData()
   debug('All inverter data retrieved', inverterData)
   
-  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState } = inverterData
+  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState, forceChargingWindows } = inverterData
+  
+  debug('Charging state from combined data', { 
+    currentChargingState, 
+    forceChargingWindows
+  })
   
   // Update cached battery capacity if we got it
   if (currentCapacity !== null && batteryCapacity !== currentCapacity) {
@@ -385,10 +390,15 @@ async function main () {
     console.log(`${pvIcon} PV Generation: ${inverterData.pvGeneration} W`)
   }
   
-  // Charging status with appropriate icon
+  // Charging status with appropriate icon - show force charging windows info
   const chargingIcon = currentChargingState ? '🔌' : '🔋'
   const chargingText = currentChargingState ? 'YES' : 'NO'
-  console.log(`${chargingIcon} Currently Charging: ${chargingText}`)
+  
+  if (forceChargingWindows !== null && forceChargingWindows !== undefined) {
+    console.log(`${chargingIcon} Currently Charging: ${chargingText} (${forceChargingWindows} time windows configured)`)
+  } else {
+    console.log(`${chargingIcon} Currently Charging: ${chargingText}`)
+  }
   
   // Forecast information with weather-appropriate icon
   const forecastIcon = forecastedGeneration !== null ? (forecastedGeneration > 5 ? '☀️' : forecastedGeneration > 1 ? '⛅' : '☁️') : '❓'
@@ -396,7 +406,7 @@ async function main () {
   
   // Enhanced decision display
   if (forecastData && forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
-    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}% → ${forecastData.adjustedTargetSOC}% (forecast adjusted)`)
+    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}% → ${forecastData.adjustedTargetSOC.toFixed(1)}% (forecast adjusted)`)
   } else if (forecastData && forecastData.originalTargetSOC) {
     console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}%`)
   }
@@ -412,6 +422,34 @@ async function main () {
   const decisionIcon = shouldCharge ? '🟢' : '🔴'
   const decisionText = shouldCharge ? 'START CHARGING' : 'STOP/CONTINUE NO CHARGING'
   console.log(`\n${decisionIcon} DECISION: ${decisionText}`)
+  
+  // SAFEGUARD: Prevent battery from being stuck in force charge mode
+  if (currentChargingState === true && !shouldCharge) {
+    console.log('⚠️  SAFEGUARD ALERT: Battery is in force charge mode but logic says not to charge!')
+    console.log('🛡️  This could leave the battery stuck in force charge - ensuring it gets turned off')
+    
+    // Send alert email about the safeguard action
+    try {
+      await Email.sendErrorEmail('Battery Force Charge Safeguard Activated', 
+        'Battery was detected in force charge mode but charging logic determined it should not be charging. Safeguard activated to prevent battery being stuck in force charge.', 
+        {
+          currentState: 'Force charging (parameter = 1)',
+          expectedState: 'Not charging (parameter = 91)',
+          action: 'Forcing battery off to prevent being stuck in force charge',
+          stateOfCharge: stateOfCharge + '%',
+          safeguardReason: shouldCharge ? 'Logic says should charge' : 'Logic says should NOT charge',
+          systemInfo: {
+            timestamp: new Date().toISOString(),
+            OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
+            forecastedGeneration: forecastData?.forecastedGeneration || 'N/A'
+          }
+        }
+      )
+    } catch (emailError) {
+      debug('Failed to send safeguard alert email', emailError)
+    }
+  }
+  
   console.log('═'.repeat(50))
 
   debug('Calling setCharge with decision and forecast data', { shouldCharge, stateOfCharge, forecastData })

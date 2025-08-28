@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "forecast": "node show-forecast.js",
-    "batteryOn": "npx playwright test batteryOn.test.js",
-    "batteryOff": "npx playwright test batteryOff.test.js",
+    "batteryOn": "FORCE_CHARGE=on npx playwright test tests/simpleBatteryControl.test.js",
+    "batteryOff": "FORCE_CHARGE=off npx playwright test tests/simpleBatteryControl.test.js",
     "getAllData": "npx playwright test getAllInverterData.test.js",
     "test": "npx playwright test",
     "test:headless": "npx playwright test --headed=false",
