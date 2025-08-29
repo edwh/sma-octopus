@@ -8,7 +8,6 @@
     "forecast": "node show-forecast.js",
     "batteryOn": "FORCE_CHARGE=on npx playwright test tests/simpleBatteryControl.test.js",
     "batteryOff": "FORCE_CHARGE=off npx playwright test tests/simpleBatteryControl.test.js",
-    "getAllData": "npx playwright test getAllInverterData.test.js",
     "test": "npx playwright test",
     "test:headless": "npx playwright test --headed=false",
     "install-playwright": "npx playwright install",

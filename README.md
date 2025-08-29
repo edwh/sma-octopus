@@ -3,7 +3,7 @@
 Electricity tariffs like Octopus Go and battery storage open up the opportunity to store energy when it's cheap.
 
 This tool controls an SMA Sunny Island inverter based on time-based tariffs (Octopus Go) or dynamic pricing (Octopus
-Agile). It uses Octopus APIs and Playwright scripts to interact directly with the SMA inverter's web interface.
+Agile). It uses Octopus APIs and Playwright scripts to interact with Sunny Portal for both data collection and charging control.
 
 **Current Status:**
 
@@ -32,12 +32,7 @@ This is my use-case:
 
 Copy `.env.example` to `.env` and configure the following variables:
 
-## SMA Inverter Configuration
-
-* `inverterIP` - IP address of the SMA inverter
-* `installerPassword` - Installer password for the inverter web UI
-
-## Sunny Portal Configuration (Solar Forecasting)
+## Sunny Portal Configuration
 
 * `SUNNY_PORTAL_USERNAME` - Your Sunny Portal email address
 * `SUNNY_PORTAL_PASSWORD` - Your Sunny Portal password
@@ -46,9 +41,11 @@ Copy `.env.example` to `.env` and configure the following variables:
 ## Octopus Go Configuration
 
 * `OCTOPUS_GO_ENABLED` - Enable Octopus Go time-based charging (true/false)
-* `OCTOPUS_GO_START_TIME` - Cheap rate start time (default: 00:30)
-* `OCTOPUS_GO_END_TIME` - Cheap rate end time (default: 05:30)
+* `OCTOPUS_GO_START_TIME` - Cheap rate start time in GMT/UTC (default: 00:30)
+* `OCTOPUS_GO_END_TIME` - Cheap rate end time in GMT/UTC (default: 05:30)
 * `OCTOPUS_GO_RATE` - Cheap rate price in pence (default: 8.5)
+
+**Important**: Octopus Go times are always specified in GMT (UTC), regardless of local time zone or British Summer Time (BST). The system automatically handles the conversion to local time for comparison.
 
 ## Battery Configuration
 
@@ -187,7 +184,7 @@ When `OCTOPUS_GO_ENABLED=true`, the system uses intelligent time-based charging 
 
 5. **State Tracking**: Remembers charging state between runs and sends detailed email notifications
 
-6. **Accurate kWh Calculation**: Retrieves actual battery capacity from SMA inverter for precise energy calculations
+6. **Accurate kWh Calculation**: Retrieves actual battery capacity from Sunny Portal for precise energy calculations
 
 7. **Enhanced Notifications**: Email alerts include:
     - Solar forecast information and adjusted targets

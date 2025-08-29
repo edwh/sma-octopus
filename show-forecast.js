@@ -42,12 +42,13 @@ async function showForecast() {
     // Show Octopus Go window status first
     console.log('\n=== OCTOPUS GO STATUS ===')
     const now = new Date()
-    const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0')
+    const localTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0')
+    const gmtTime = now.getUTCHours().toString().padStart(2, '0') + ':' + now.getUTCMinutes().toString().padStart(2, '0')
     const startTime = process.env.OCTOPUS_GO_START_TIME || '00:30'
     const endTime = process.env.OCTOPUS_GO_END_TIME || '05:30'
     
-    console.log(`⏰ Current time: ${currentTime}`)
-    console.log(`🕐 Octopus Go window: ${startTime} - ${endTime}`)
+    console.log(`⏰ Current time: ${localTime} (local), ${gmtTime} (GMT)`)
+    console.log(`🕐 Octopus Go window: ${startTime} - ${endTime} (GMT)`)
     console.log(`🪟 Currently in window: ${isWithinWindow() ? '✅ YES' : '❌ NO'}`)
     
     console.log('\n=== SOLAR FORECAST ===')
@@ -94,8 +95,9 @@ async function showForecast() {
 }
 
 function isWithinWindow() {
+  // Use GMT time since Octopus Go times are always GMT
   const now = new Date()
-  const currentTime = now.getHours() * 100 + now.getMinutes()
+  const currentTime = now.getUTCHours() * 100 + now.getUTCMinutes()
   
   const startTime = process.env.OCTOPUS_GO_START_TIME || '00:30'
   const endTime = process.env.OCTOPUS_GO_END_TIME || '05:30'

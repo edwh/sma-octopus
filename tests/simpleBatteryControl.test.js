@@ -249,10 +249,10 @@ test('Battery Control - Simple Test', async ({page}) => {
       
       await page.screenshot({ path: 'simple-after-add-click.png', fullPage: true })
       
-      // Calculate time window (1 minute ago to 1 hour from now) - adjusted for BST
+      // Calculate time window (1 minute ago to 30 minutes from now) - adjusted for BST
       const now = new Date()
       const startTime = new Date(now.getTime() - 1 * 60000) // 1 minute before now
-      const endTime = new Date(startTime.getTime() + 60 * 60000) // 1 hour later
+      const endTime = new Date(startTime.getTime() + 30 * 60000) // 30 minutes later
       
       // Adjust for BST (GMT+1) - add 1 hour to UTC times
       const bstOffset = 60 * 60000 // 1 hour in milliseconds

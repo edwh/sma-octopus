@@ -1,1434 +1,445 @@
 const {expect} = require('@playwright/test')
 
-exports.setCharging = async function (page, val) {
-  const maxRetries = 2
-  let attempt = 0
-  
-  while (attempt <= maxRetries) {
-    attempt++
-    console.log(`Setting charging parameter attempt ${attempt}/${maxRetries + 1}`)
-    
-    try {
-      console.log(`Navigating to inverter at ${process.env.inverterIP}...`)
-      await page.goto('http://' + process.env.inverterIP + '/#/login', { timeout: 30000 })
-      
-      console.log('Logging in...')
-      await page.selectOption('select[name="username"]', 'Installer', { timeout: 15000 })
-      await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-      await page.click('#bLogin', { timeout: 15000 })
-      
-      // Wait for login to complete
-      console.log('Waiting for login to complete...')
-      await page.waitForLoadState('networkidle', { timeout: 30000 })
-      
-      console.log('Navigating to Device Parameters...')
-      await page.click('#lDeviceParameter', { timeout: 30000 })
-      
-      console.log('Clicking Parameter Edit...')
-      await page.click('#bParameterEdit', { timeout: 20000 })
-      
-      const batterySection = page.locator('span', {
-        hasText: 'Battery'
-      }).first()
-      await batterySection.click({ timeout: 15000 })
-      
-      const applicationSection = page.locator('span', {
-        hasText: 'Areas of application'
-      }).first()
-
-      const selfConsumption = page.locator('td', {
-        hasText: 'Minimum width of self-consumption area'
-      })
-
-      const selfConsumptionRow = await selfConsumption.locator('..').first()
-      const selfConsumptionInput = await selfConsumptionRow.locator('input').first()
-
-      // Set the value - low value forces battery to charge
-      console.log(`Setting self-consumption parameter to: ${val}`)
-      await selfConsumptionInput.fill(val)
-
-      // Save the changes
-      console.log('Saving changes...')
-      await page.locator('button', {
-        hasText: 'Save all'
-      }).click({ timeout: 15000 })
-      
-      console.log('Parameter saved, waiting for save confirmation...')
-      
-      // Wait for save operation to complete
-      console.log('Waiting for save operation to complete...')
-      try {
-        // Wait a bit for the save to process
-        await page.waitForTimeout(5000)
-      } catch (e) {
-        // Continue regardless
-      }
-      
-      // Navigate to fresh login page to verify the value was stored
-      console.log('Navigating to fresh login page to verify parameter was stored...')
-      await page.goto('http://' + process.env.inverterIP + '/#/login', { 
-        waitUntil: 'load', 
-        timeout: 45000 
-      })
-      
-      // Re-login after navigation
-      console.log('Re-logging in for verification...')
-      await page.selectOption('select[name="username"]', 'Installer', { timeout: 15000 })
-      await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-      await page.click('#bLogin', { timeout: 15000 })
-      await page.waitForLoadState('networkidle', { timeout: 45000 })
-      
-      console.log('Navigating back to Device Parameters for verification...')
-      await page.click('#lDeviceParameter', { timeout: 30000 })
-      
-      console.log('Clicking Parameter Edit for verification...')
-      await page.click('#bParameterEdit', { timeout: 20000 })
-      
-      // Navigate back to the parameter
-      console.log('Finding Battery section for verification...')
-      const batterySection2 = page.locator('span', { hasText: 'Battery' }).first()
-      await batterySection2.click({ timeout: 20000 })
-      
-      console.log('Looking for self-consumption parameter...')
-      const selfConsumption2 = page.locator('td', { hasText: 'Minimum width of self-consumption area' })
-      const selfConsumptionRow2 = selfConsumption2.locator('..').first()
-      const selfConsumptionInput2 = selfConsumptionRow2.locator('input').first()
-      
-      // Check the stored value with timeout
-      console.log('Reading stored parameter value...')
-      const storedValue = await selfConsumptionInput2.inputValue({ timeout: 20000 })
-      console.log(`Verification: Expected "${val}", Found "${storedValue}"`)
-      
-      if (storedValue === val) {
-        console.log(`✅ Parameter successfully set and verified on attempt ${attempt}`)
-        return page
-      } else {
-        console.log(`❌ Parameter verification failed on attempt ${attempt}: expected "${val}", got "${storedValue}"`)
-        if (attempt > maxRetries) {
-          throw new Error(`Failed to set parameter after ${maxRetries + 1} attempts. Expected "${val}", but stored value is "${storedValue}"`)
-        }
-        console.log(`Retrying after brief delay...`)
-        // Brief delay before retry - using page interaction instead of waitForTimeout
-        try {
-          await page.waitForSelector('body', { timeout: 2000 })
-        } catch (e) {
-          // Timeout is expected, just used for delay
-        }
-      }
-      
-    } catch (error) {
-      console.log(`❌ Error on attempt ${attempt}:`, error.message)
-      if (attempt > maxRetries) {
-        throw new Error(`Failed to set charging parameter after ${maxRetries + 1} attempts: ${error.message}`)
-      }
-      console.log(`Retrying after brief delay...`)
-      // Brief delay before retry
-      try {
-        await page.waitForSelector('body', { timeout: 2000 })
-      } catch (e) {
-        // Timeout is expected, just used for delay
-      }
-    }
-  }
-  
-  throw new Error(`Failed to set charging parameter after ${maxRetries + 1} attempts`)
-}
-
-exports.getStateOfCharge = async function (page) {
-  await page.setViewportSize({width: 2048, height: 1536})
-
-  await page.goto('http://' + process.env.inverterIP + '/#/login')
-  await page.selectOption('select[name="username"]', 'Installer')
-  await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-  await page.click('#bLogin')
-  await page.click('#lSpotValues')
-  const batterySection = await page.locator('span', {
-    hasText: 'Battery'
-  }).first()
-  await batterySection.click()
-
-  // Wait for section to expand - doesn't seem to work using normal Playwright waits.
-  await page.waitForTimeout(5000)
-  const socPercent = page.locator('td', {
-    hasText: 'State of charge'
-  })
-
-  const socRow = await socPercent.locator('..').first()
-  const socValue = await socRow.locator('.ng-scope').locator('nth=1').first()
-  // await socValue.scrollIntoViewIfNeeded()
-  let value = await socValue.innerText()
-  value = value.replace(' ', '').replace('%', '')
-  console.log('SOC', value)
-  value = parseInt(value)
-
-  expect(value).toBeGreaterThan(0)
-  expect(value).toBeLessThan(100)
-
-  return value
-}
-
-exports.getCurrentConsumption = async function (page) {
-  await page.setViewportSize({width: 2048, height: 1536})
-
-  await page.goto('http://' + process.env.inverterIP + '/#/login')
-  await page.selectOption('select[name="username"]', 'Installer')
-  await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-  await page.click('#bLogin')
-  await page.click('#lSpotValues')
-  
-  // Look for consumption values - could be in various sections
-  // Common patterns: "AC consumption", "Grid consumption", "Load", etc.
-  
-  // Wait for page to load
-  await page.waitForTimeout(5000)
-  
-  // Try to find consumption in different possible locations
-  const consumptionPatterns = [
-    'AC power consumption',
-    'Grid consumption', 
-    'Load power',
-    'Consumption',
-    'AC load'
-  ]
-  
-  let consumption = null
-  
-  for (const pattern of consumptionPatterns) {
-    try {
-      const consumptionElement = page.locator('td', { hasText: pattern }).first()
-      if (await consumptionElement.count() > 0) {
-        const consumptionRow = await consumptionElement.locator('..').first()
-        const consumptionValue = await consumptionRow.locator('.ng-scope').locator('nth=1').first()
-        
-        let value = await consumptionValue.innerText()
-        // Remove units (W, kW) and spaces, convert to watts
-        value = value.replace(/\s/g, '').replace('W', '').replace('kW', '').replace(',', '.')
-        
-        if (value.includes('k')) {
-          // Convert kW to W
-          consumption = parseFloat(value.replace('k', '')) * 1000
-        } else {
-          consumption = parseFloat(value)
-        }
-        
-        console.log('Consumption', consumption)
-        break
-      }
-    } catch (e) {
-      // Continue to next pattern
-    }
-  }
-  
-  if (consumption === null) {
-    console.log('Could not find consumption data on page')
-  }
-
-  return consumption
-}
-
-exports.getBatteryCapacity = async function (page) {
-  await page.setViewportSize({width: 2048, height: 1536})
-
-  await page.goto('http://' + process.env.inverterIP + '/#/login')
-  await page.selectOption('select[name="username"]', 'Installer')
-  await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-  await page.click('#bLogin')
-  await page.waitForTimeout(5000)
-  
-  let capacity = null
-  
-  try {
-    // Navigate to Device Parameters where the actual rated capacity is stored
-    await page.click('#lDeviceParameter')
-    await page.waitForTimeout(3000)
-    
-    // Find and expand Battery section
-    const batterySection = page.locator('span', { hasText: 'Battery' }).first()
-    if (await batterySection.count() > 0) {
-      await batterySection.click()
-      await page.waitForTimeout(3000)
-      
-      // Look specifically for "Rated capacity" in the Battery parameters
-      // From our exploration, we found: "Rated capacity	31,200 Wh"
-      const pageContent = await page.textContent('body')
-      
-      // Search for the rated capacity line
-      const lines = pageContent.split('\n')
-      for (const line of lines) {
-        if (line.includes('Rated capacity') && line.includes('Wh')) {
-          // Extract the value: "Rated capacity	31,200 Wh" -> "31,200"
-          const match = line.match(/Rated capacity\s+([0-9,]+)\s*Wh/)
-          if (match) {
-            const whValue = parseFloat(match[1].replace(',', ''))
-            capacity = whValue / 1000  // Convert Wh to kWh
-            console.log('Capacity found:', whValue, 'Wh =', capacity, 'kWh')
-            break
-          }
-        }
-      }
-      
-      if (capacity === null) {
-        console.log('Could not find "Rated capacity" field in expected format')
-        // Try alternative parsing - look for the table structure
-        const tables = await page.locator('table').all()
-        
-        for (const table of tables) {
-          const rows = await table.locator('tr').all()
-          
-          for (const row of rows) {
-            try {
-              const cells = await row.locator('td').all()
-              if (cells.length >= 2) {
-                const label = await cells[0].innerText()
-                const value = await cells[1].innerText()
-                
-                if (label.trim() === 'Rated capacity' && value.includes('Wh')) {
-                  // Extract numeric value from something like "31,200 Wh"
-                  const whMatch = value.match(/([0-9,]+)\s*Wh/)
-                  if (whMatch) {
-                    const whValue = parseFloat(whMatch[1].replace(',', ''))
-                    capacity = whValue / 1000  // Convert to kWh
-                    console.log('Capacity found in table:', whValue, 'Wh =', capacity, 'kWh')
-                    break
-                  }
-                }
-              }
-            } catch (e) {
-              // Skip problematic rows
-            }
-          }
-          if (capacity !== null) break
-        }
-      }
-      
-    } else {
-      console.log('Battery section not found in Device Parameters')
-    }
-    
-  } catch (e) {
-    console.log('Error getting battery capacity:', e)
-  }
-  
-  if (capacity === null) {
-    console.log('Could not determine battery capacity from device parameters')
-  }
-
-  console.log('Capacity', capacity || 'unknown')
-  return capacity
-}
-
-exports.checkChargingState = async function (page) {
-  await page.setViewportSize({width: 2048, height: 1536})
-
-  try {
-    console.log('=== CHECKING BATTERY CHARGING STATE FROM PARAMETERS ===')
-    
-    await page.goto('http://' + process.env.inverterIP + '/#/login', { timeout: 60000 })
-    
-    // Wait for dropdown and login
-    const userSelect = page.locator('select[name="username"]')
-    await page.waitForFunction(() => {
-      const select = document.querySelector('select[name="username"]')
-      return select && select.options.length > 1
-    }, { timeout: 70000 })
-    
-    await userSelect.selectOption({ label: 'Installer' })
-    await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-    await page.click('#bLogin')
-    await page.waitForTimeout(3000)
-    
-    // Navigate to Device Parameters
-    console.log('Navigating to Device Parameters...')
-    await page.click('#lDeviceParameter', { timeout: 30000 })
-    
-    console.log('Clicking Parameter Edit...')
-    await page.click('#bParameterEdit', { timeout: 20000 })
-    
-    const batterySection = page.locator('span', {
-      hasText: 'Battery'
-    }).first()
-    await batterySection.click({ timeout: 15000 })
-    
-    // Look for the self-consumption parameter
-    console.log('Looking for self-consumption parameter...')
-    const selfConsumption = page.locator('td', {
-      hasText: 'Minimum width of self-consumption area'
-    })
-    
-    const selfConsumptionRow = await selfConsumption.locator('..').first()
-    const selfConsumptionInput = await selfConsumptionRow.locator('input').first()
-    
-    // Read the current value
-    const currentValue = await selfConsumptionInput.inputValue({ timeout: 20000 })
-    console.log(`Current self-consumption parameter value: "${currentValue}"`)
-    
-    // Determine if battery is in force charge mode
-    // Value "1" = Force charge mode
-    // Value "91" = Normal/stop charge mode
-    const isCharging = currentValue === '1'
-    console.log(`Battery charging state: ${isCharging ? 'CHARGING (force mode)' : 'NOT CHARGING (normal mode)'}`)
-    
-    return isCharging
-    
-  } catch (error) {
-    console.log('Error checking charging state:', error.message)
-    return null
-  }
-}
-
-exports.getAllInverterData = async function (page) {
-  await page.setViewportSize({width: 2048, height: 1536})
-  
-  const result = {
-    stateOfCharge: null,
-    consumption: null,
-    capacity: null,
-    isCharging: null,
-    pvGeneration: null,
-    purchasedElectricity: null,
-    batteryCharging: null
-  }
-
-  try {
-    console.log('=== GETTING SOC AND CAPACITY FROM SMA INVERTER ONLY ===')
-    
-    // Get SOC from inverter
-    try {
-      console.log(`--- Getting SOC from inverter at ${process.env.inverterIP} ---`)
-      
-      await page.goto('http://' + process.env.inverterIP + '/#/login', { timeout: 60000 })
-      
-      // Wait for dropdown and login
-      const userSelect = page.locator('select[name="username"]')
-      await page.waitForFunction(() => {
-        const select = document.querySelector('select[name="username"]')
-        return select && select.options.length > 1
-      }, { timeout: 70000 })
-      
-      await userSelect.selectOption({ label: 'Installer' })
-      await page.locator('input[name="password"]').pressSequentially(process.env.installerPassword)
-      await page.click('#bLogin')
-      await page.waitForTimeout(3000)
-      
-      // Navigate to Spot Values
-      await page.click('#lSpotValues', { timeout: 30000 })
-      await page.waitForTimeout(5000)
-      
-      // Get SOC only from Battery section
-      const batterySection = page.locator('span', { hasText: 'Battery' }).first()
-      if (await batterySection.count() > 0) {
-        await batterySection.click({ timeout: 20000 })
-        await page.waitForTimeout(5000)
-        
-        const rows = await page.locator('tr').all()
-        for (const row of rows) {
-          try {
-            const rowText = await row.innerText()
-            const cleanText = rowText.replace(/\s+/g, ' ').trim()
-            
-            if (cleanText.includes('State of charge')) {
-              const match = cleanText.match(/State of charge\s+(\d+)\s*%/)
-              if (match) {
-                result.stateOfCharge = parseInt(match[1])
-                console.log(`✅ SOC from inverter: ${result.stateOfCharge}%`)
-                break
-              }
-            }
-          } catch (e) {
-            // Skip problematic rows
-          }
-        }
-      }
-      
-      console.log(`✅ SOC extraction complete: ${result.stateOfCharge}%`)
-      
-    } catch (e) {
-      console.log(`❌ Could not get SOC from inverter: ${e.message}`)
-    }
-    
-    // Set reasonable battery capacity (this is configured, not dynamic)
-    result.capacity = 31.2 // kWh - adjust to your actual battery size
-    console.log(`✅ Using configured battery capacity: ${result.capacity} kWh`)
-    
-    // Check charging state by reading the self-consumption parameter
-    try {
-      console.log('--- Checking charging state from parameters ---')
-      result.isCharging = await exports.checkChargingState(page)
-      console.log(`✅ Charging state detected: ${result.isCharging}`)
-    } catch (e) {
-      console.log(`❌ Could not check charging state: ${e.message}`)
-      result.isCharging = null
-    }
-
-  } catch (e) {
-    console.log('Error in getAllInverterData:', e.message)
-  }
-
-  console.log('AllData', JSON.stringify(result, null, 2))
-  return result
-}
-
 exports.getForecastData = async function (page) {
   await page.setViewportSize({width: 1920, height: 1080})
   
   try {
     console.log('Navigating to Sunny Portal...')
-    await page.goto(process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/')
-    await page.waitForLoadState('networkidle', { timeout: 30000 })
     
-    console.log('Checking for redirects and login form...')
+    // Start on main page to ensure clean state
+    console.log('📡 Loading Sunny Portal homepage...')
+    await page.goto('https://www.sunnyportal.com/', { timeout: 30000 })
+    console.log('✅ Homepage loaded, waiting for network activity to settle...')
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 10000 })
+      console.log('✅ DOM content loaded')
+    } catch (e) {
+      console.log('⚠️ DOM load timeout, continuing anyway...')
+    }
+    await page.waitForTimeout(2000)
     
-    // Check current URL to see if we need to initiate login
-    const currentUrl = page.url()
-    console.log('Current URL after navigation:', currentUrl)
-    
-    // If we're on an error page, we need to go back to homepage and start proper OAuth flow
-    if (currentUrl.includes('error=login_required') || currentUrl.includes('SilentLogin=true')) {
-      console.log('Detected login required, navigating to clean homepage to start proper OAuth flow...')
-      await page.goto('https://www.sunnyportal.com/', { timeout: 30000, waitUntil: 'load' })
-      await page.waitForLoadState('networkidle', { timeout: 30000 })
-      console.log('Now on homepage:', page.url())
+    // Handle cookie consent if present
+    try {
+      const acceptCookies = page.locator('#cmpwelcomebtnyes')
+      await acceptCookies.click({ timeout: 5000 })
+      console.log('✅ Accepted cookies')
+      await page.waitForTimeout(2000)
+    } catch (e) {
+      console.log('ℹ️ No cookie dialog found or already handled')
     }
     
-    // Wait a bit for any redirects to complete
-    await page.waitForTimeout(3000)
-    
-    // Handle cookie consent first
-    console.log('Checking for cookie consent...')
+    // Check for login requirement - if already logged in, this will redirect to dashboard
+    let isLoggedIn = false
     try {
-      const cookieAcceptSelectors = [
-        'button:has-text("Accept all")',
-        'button:has-text("Accept")', 
-        'button:has-text("OK")',
-        '#cookie-accept',
-        '.cookie-accept'
+      // Look for elements that indicate we're logged in
+      await page.waitForSelector('a:has-text("Log out"), .menu, .navigation', { timeout: 5000 })
+      isLoggedIn = true
+      console.log('Already logged in to Sunny Portal')
+    } catch {
+      console.log('Need to log in to Sunny Portal')
+    }
+    
+    if (!isLoggedIn) {
+      console.log('🔍 Looking for Login button on homepage...')
+      
+      // Click the Login button on the homepage
+      try {
+        // Use the specific ID from the DOM structure provided
+        await page.click('#ctl00_ContentPlaceHolder1_Logincontrol1_SmaIdLoginButton', { timeout: 10000 })
+        console.log('✅ Clicked Login button')
+        
+        // Wait for redirect to SMA login service
+        await page.waitForURL(/login\.sma\.energy/, { timeout: 15000 })
+        console.log('✅ Redirected to SMA login service')
+        
+        // Wait for the login form to load
+        await page.waitForLoadState('domcontentloaded', { timeout: 15000 })
+        await page.waitForTimeout(3000)
+        
+      } catch (e) {
+        console.log('⚠️ Could not find/click login button, trying direct navigation...')
+        await page.goto('https://www.sunnyportal.com/Templates/Start.aspx')
+        await page.waitForTimeout(3000)
+      }
+      
+      // Debug: Let's see what's actually on the page
+      console.log('🔍 Debugging: Checking current page...')
+      const currentUrl = page.url()
+      console.log(`Current URL: ${currentUrl}`)
+      
+      // If we're redirected to SMA login service, handle it properly
+      if (currentUrl.includes('login.sma.energy')) {
+        console.log('🔄 Detected SMA login service redirect, waiting for page to fully load...')
+        await page.waitForTimeout(5000) // Extra wait for SMA login service
+        try {
+          await page.waitForLoadState('domcontentloaded', { timeout: 10000 })
+        } catch (e) {
+          console.log('⚠️ SMA login service load timeout, continuing...')
+        }
+      }
+      
+      // Take a screenshot for debugging
+      try {
+        await page.screenshot({ path: 'debug-login-page.png', fullPage: true })
+        console.log('📸 Screenshot saved: debug-login-page.png')
+      } catch (e) {
+        console.log('⚠️ Could not save screenshot')
+      }
+      
+      // Look for username/email field
+      console.log('Looking for login form...')
+      const usernameSelectors = [
+        // Standard selectors
+        'input[name="username"]',
+        'input[name="email"]',
+        'input[type="email"]',
+        'input[id*="username"]',
+        'input[id*="email"]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="username" i]',
+        // SMA/Keycloak specific selectors
+        'input[name="login"]', 
+        'input[id="username"]',
+        'input[id="email"]',
+        '#username',
+        '#email',
+        // Generic form selectors
+        'form input[type="text"]:first-child',
+        'form input:not([type="password"]):not([type="hidden"]):not([type="submit"])',
+        // Broader search
+        'input[autocomplete*="username"]',
+        'input[autocomplete*="email"]'
       ]
       
-      for (const selector of cookieAcceptSelectors) {
+      let usernameField = null
+      for (const selector of usernameSelectors) {
         try {
-          const cookieButton = page.locator(selector)
-          if (await cookieButton.count() > 0) {
-            console.log(`Found and clicking cookie accept button: ${selector}`)
-            await cookieButton.click()
-            await page.waitForTimeout(1000)
-            break
-          }
+          console.log(`🔍 Trying username selector: ${selector}`)
+          usernameField = page.locator(selector).first()
+          await usernameField.waitFor({ timeout: 3000 })
+          console.log(`✅ Found username field: ${selector}`)
+          break
         } catch (e) {
-          // Continue to next selector
+          console.log(`❌ Failed: ${selector}`)
+          usernameField = null
+          // Try next selector
         }
       }
-    } catch (e) {
-      console.log('No cookie consent found or error handling it:', e.message)
-    }
-    
-    // Check if we got redirected to the SMA login system
-    console.log('Current URL after cookie handling:', page.url())
-    
-    console.log('Looking for login button on homepage...')
-    
-    // Look for the Login button on the Sunny Portal homepage using the specific ID pattern
-    let loginPageButton = null
-    const possibleHomeLoginSelectors = [
-      '*[id$="SmaIdLoginButton"]',  // Use $ for ends-with to match the pattern better
-      '*[id*="SmaIdLoginButton"]',
-      'input[id*="SmaIdLoginButton"]',
-      'button[id*="SmaIdLoginButton"]',
-      'a[id*="SmaIdLoginButton"]',
-      'a:has-text("Login")',
-      'button:has-text("Login")',
-      'input[value="Login"]',
-      '*[href*="login"]',
-      '*[onclick*="login"]'
-    ]
-    
-    for (const selector of possibleHomeLoginSelectors) {
-      try {
-        console.log(`Trying homepage login selector: ${selector}`)
-        await page.waitForSelector(selector, { timeout: 5000 })
-        loginPageButton = page.locator(selector)
-        if (await loginPageButton.count() > 0) {
-          console.log(`Found homepage login button with selector: ${selector}`)
-          break
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
-    }
-    
-    if (loginPageButton) {
-      console.log('Clicking homepage login button to start OAuth flow...')
-      // Wait for navigation after clicking the login button
-      try {
-        await Promise.all([
-          page.waitForNavigation({ timeout: 30000 }),
-          loginPageButton.click()
-        ])
-        console.log('Homepage login button clicked and navigated to:', page.url())
-      } catch (e) {
-        console.log('Navigation timeout after clicking login, trying fallback...')
-        await loginPageButton.click()
-        await page.waitForTimeout(5000)
-        console.log('Current URL after fallback click:', page.url())
-      }
-    } else {
-      console.log('Could not find homepage login button, might already be on login page')
-    }
-    
-    console.log('Looking for login form...')
-    
-    // Try multiple possible selectors for the modern SMA login system
-    const possibleUsernameSelectors = [
-      'input[name="username"]',
-      'input[name="email"]', 
-      'input[type="email"]',
-      'input[id="username"]',
-      'input[id="email"]',
-      'input[placeholder*="Email"]',
-      'input[placeholder*="email"]',
-      'input[placeholder*="Username"]',
-      'input[placeholder*="username"]',
-      'input[data-testid="username"]',
-      'input[data-testid="email"]',
-      '#username',
-      '#email',
-      '.username-input',
-      '.email-input'
-    ]
-    
-    let usernameInput = null
-    let usernameSelector = null
-    
-    for (const selector of possibleUsernameSelectors) {
-      try {
-        console.log(`Trying username selector: ${selector}`)
-        await page.waitForSelector(selector, { timeout: 3000 })
-        usernameInput = page.locator(selector)
-        if (await usernameInput.count() > 0) {
-          usernameSelector = selector
-          console.log(`Found username field with selector: ${selector}`)
-          break
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
-    }
-    
-    if (!usernameInput) {
-      // Take a screenshot to see what we're dealing with
-      await page.screenshot({ path: 'login-page-debug.png', fullPage: true })
-      console.log('Login page screenshot saved as login-page-debug.png')
       
-      // Try to find any input fields
-      const allInputs = await page.locator('input').all()
-      console.log(`Found ${allInputs.length} input fields on the page`)
+      if (!usernameField) {
+        throw new Error('Could not find username/email field')
+      }
       
-      for (let i = 0; i < allInputs.length; i++) {
+      // Fill in credentials
+      console.log('🔑 About to fill username field...')
+      await usernameField.fill(process.env.SUNNY_PORTAL_USERNAME)
+      console.log('✅ Filled username')
+      
+      // Look for password field
+      const passwordField = page.locator('input[type="password"]').first()
+      await passwordField.waitFor({ timeout: 10000 })
+      await passwordField.fill(process.env.SUNNY_PORTAL_PASSWORD)
+      console.log('Filled password')
+      
+      // Submit form
+      const submitSelectors = [
+        'button[type="submit"]',
+        'input[type="submit"]',
+        'button:has-text("Log in")',
+        'button:has-text("Login")',
+        'button:has-text("Sign in")',
+        '.login-submit',
+        'form button'
+      ]
+      
+      for (const selector of submitSelectors) {
         try {
-          const input = allInputs[i]
-          const type = await input.getAttribute('type')
-          const name = await input.getAttribute('name')
-          const id = await input.getAttribute('id')
-          const placeholder = await input.getAttribute('placeholder')
-          console.log(`Input ${i}: type=${type}, name=${name}, id=${id}, placeholder=${placeholder}`)
-        } catch (e) {
-          console.log(`Could not get attributes for input ${i}`)
-        }
-      }
-      
-      throw new Error('Could not find username/email input field')
-    }
-    
-    console.log('Filling login credentials...')
-    console.log('Username field found, filling with username...')
-    await usernameInput.fill(process.env.SUNNY_PORTAL_USERNAME)
-    
-    // Add a small delay
-    await page.waitForTimeout(1000)
-    
-    // Look for password field
-    const possiblePasswordSelectors = [
-      'input[name="password"]',
-      'input[type="password"]',
-      'input[id="password"]',
-      'input[placeholder*="Password"]',
-      'input[placeholder*="password"]',
-      'input[data-testid="password"]',
-      '#password',
-      '.password-input'
-    ]
-    
-    let passwordInput = null
-    
-    for (const selector of possiblePasswordSelectors) {
-      try {
-        console.log(`Trying password selector: ${selector}`)
-        await page.waitForSelector(selector, { timeout: 3000 })
-        passwordInput = page.locator(selector)
-        if (await passwordInput.count() > 0) {
-          console.log(`Found password field with selector: ${selector}`)
+          await page.click(selector, { timeout: 5000 })
+          console.log(`Clicked submit button: ${selector}`)
           break
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
-    }
-    
-    if (!passwordInput) {
-      throw new Error('Could not find password input field')
-    }
-    
-    console.log('Password field found, filling with password...')
-    await passwordInput.fill(process.env.SUNNY_PORTAL_PASSWORD)
-    
-    // Add a small delay
-    await page.waitForTimeout(1000)
-    
-    // Take a screenshot before submitting to debug
-    await page.screenshot({ path: 'before-login-submit.png', fullPage: true })
-    console.log('Pre-submit screenshot saved as before-login-submit.png')
-    
-    // Find and click login button - using the exact text from the screenshot
-    const possibleLoginButtonSelectors = [
-      'button:has-text("Log in")',
-      'button[type="submit"]',
-      'input[type="submit"]',
-      'button:has-text("Login")',
-      'button:has-text("Sign in")',
-      'button:has-text("Sign In")',
-      'button:has-text("Anmelden")',
-      'button[data-testid="login"]',
-      'button[data-testid="submit"]',
-      '.login-button',
-      '.submit-button'
-    ]
-    
-    let loginButton = null
-    
-    for (const selector of possibleLoginButtonSelectors) {
-      try {
-        console.log(`Trying login button selector: ${selector}`)
-        loginButton = page.locator(selector)
-        if (await loginButton.count() > 0) {
-          console.log(`Found login button with selector: ${selector}`)
-          break
-        }
-      } catch (e) {
-        // Continue to next selector
-      }
-    }
-    
-    if (!loginButton) {
-      // Look for any buttons on the page
-      const allButtons = await page.locator('button').all()
-      console.log(`Found ${allButtons.length} buttons on the page`)
-      
-      for (let i = 0; i < allButtons.length; i++) {
-        try {
-          const button = allButtons[i]
-          const text = await button.innerText()
-          const type = await button.getAttribute('type')
-          const className = await button.getAttribute('class')
-          console.log(`Button ${i}: text="${text}", type=${type}, class=${className}`)
         } catch (e) {
-          console.log(`Could not get attributes for button ${i}`)
+          // Try next selector
         }
       }
       
-      throw new Error('Could not find login button')
-    }
-    
-    console.log('Clicking login button...')
-    
-    // Handle potential navigation during login
-    try {
-      await Promise.all([
-        page.waitForNavigation({ timeout: 30000 }),
-        loginButton.click()
-      ])
-      console.log('Login button clicked and navigation completed')
-    } catch (e) {
-      console.log('Navigation error or timeout during login:', e.message)
-      // Try alternative approach - just click and wait
-      try {
-        await loginButton.click()
-        await page.waitForTimeout(5000)
-        console.log('Used fallback click method')
-      } catch (e2) {
-        console.log('Fallback click also failed:', e2.message)
-      }
-    }
-    
-    // Check if we're still on the same page or got redirected
-    try {
-      const currentUrl = page.url()
-      console.log('Current URL after login attempt:', currentUrl)
-      
-      // Check for login errors on the page
-      const loginError = await page.locator('*:has-text("Login Failed"), *:has-text("Invalid"), *:has-text("Error")').first()
-      if (await loginError.count() > 0) {
-        const errorText = await loginError.innerText()
-        console.log('Login error detected:', errorText)
-      }
-      
-      // If we're still on the login page, there might be an issue
-      if (currentUrl.includes('login.sma.energy')) {
-        console.log('Still on login page, might be an authentication issue')
-      }
-      
-      console.log('Waiting for page to stabilize...')
+      // Wait for navigation after login
       await page.waitForLoadState('networkidle', { timeout: 30000 })
-      
-    } catch (e) {
-      console.log('Error checking post-login state:', e.message)
-      throw new Error('Login process failed or browser context was closed')
+      await page.waitForTimeout(5000)
     }
     
-    // Take a screenshot after login to see the dashboard
-    await page.screenshot({ path: 'after-login.png', fullPage: true })
-    console.log('Post-login screenshot saved as after-login.png')
+    console.log('Logged in successfully, navigating to forecast page...')
     
-    // Debug: Look for any navigation or sidebar elements
-    console.log('Looking for navigation elements...')
-    const allLinks = await page.locator('a').all()
-    console.log(`Found ${allLinks.length} links on the page`)
+    // Navigate to the Current Status and Forecast page
+    await page.goto('https://www.sunnyportal.com/FixedPages/HoManLive.aspx')
+    await page.waitForLoadState('networkidle', { timeout: 60000 })
+    await page.waitForTimeout(10000)
     
-    for (let i = 0; i < Math.min(allLinks.length, 10); i++) {
-      try {
-        const link = allLinks[i]
-        const text = await link.innerText()
-        const href = await link.getAttribute('href')
-        if (text && text.trim().length > 0 && text.trim().length < 50) {
-          console.log(`Link ${i}: "${text.trim()}" -> ${href}`)
-        }
-      } catch (e) {
-        // Skip problematic links
-      }
-    }
+    console.log('Looking for forecast data...')
     
-    console.log('Navigating to forecast page via sidebar...')
-    
-    // Look for the "Current Status and Forecast" link in the left sidebar
-    const forecastLinkSelectors = [
-      'a:has-text("Current Status and Forecast")',
-      'a:has-text("Current Status")',
-      'a:has-text("Forecast")',
-      'a[href*="HoManLive"]',
-      'a[href*="forecast"]',
-      'a[href*="status"]',
-      '*:has-text("Current Status and Forecast")'
+    // Method 1: Look for forecast chart data using various selectors
+    const chartSelectors = [
+      '.forecast-chart',
+      '[id*="forecast" i]',
+      '[class*="forecast" i]',
+      '.chart-container',
+      'svg',
+      'canvas'
     ]
     
-    let forecastLink = null
+    let forecastFound = false
+    let forecastSum = 0
     
-    for (const selector of forecastLinkSelectors) {
+    for (const selector of chartSelectors) {
       try {
-        console.log(`Trying forecast link selector: ${selector}`)
-        await page.waitForSelector(selector, { timeout: 5000 })
-        forecastLink = page.locator(selector)
-        if (await forecastLink.count() > 0) {
-          console.log(`Found forecast link with selector: ${selector}`)
-          break
+        const elements = await page.locator(selector).all()
+        if (elements.length > 0) {
+          console.log(`Found potential forecast elements: ${selector} (${elements.length})`)
         }
       } catch (e) {
         // Continue to next selector
       }
     }
     
-    if (forecastLink) {
-      console.log('Clicking forecast link...')
-      await forecastLink.click()
-      await page.waitForLoadState('networkidle', { timeout: 30000 })
-      console.log('Current URL after clicking forecast link:', page.url())
-    } else {
-      console.log('Could not find forecast link, trying direct navigation...')
-      await page.goto('https://www.sunnyportal.com/FixedPages/HoManLive.aspx')
-      await page.waitForLoadState('networkidle', { timeout: 30000 })
-    }
+    // Method 2: Look for JavaScript data or text containing energy values
+    console.log('Searching page content for energy values...')
+    const pageContent = await page.textContent('body')
     
-    console.log('Looking for forecast data and current status...')
+    // Look for energy values in kWh or Wh
+    const energyMatches = pageContent.match(/(\d+(?:\.\d+)?)\s*(?:k?Wh?)\b/gi) || []
+    const significantEnergies = []
     
-    // Take a screenshot for debugging
-    await page.screenshot({ path: 'forecast-page.png', fullPage: true })
-    console.log('Screenshot saved as forecast-page.png')
-    
-    // Extract current status values from Sunny Portal (visible on the Current Status page)
-    const currentStatus = {
-      pvGeneration: null,
-      consumption: null,  
-      purchasedElectricity: null,
-      batteryCharging: null,
-      batterySOC: null
-    }
-    
-    console.log('Extracting current status values from Sunny Portal...')
-    
-    try {
-      // Look for the current status tiles/cards that show power values
-      const statusElements = await page.locator('*:has-text("kW"), *:has-text("kw")').all()
-      console.log('Found', statusElements.length, 'elements with kW values')
-      
-      for (let i = 0; i < Math.min(statusElements.length, 20); i++) {
-        try {
-          const element = statusElements[i]
-          const text = await element.innerText()
-          const cleanText = text.trim()
-          
-          // Look for power generation
-          if (cleanText.match(/PV.*generation|generation.*PV|solar.*power/i)) {
-            const powerMatch = cleanText.match(/(\d+\.?\d*)\s*kW/i)
-            if (powerMatch) {
-              currentStatus.pvGeneration = parseFloat(powerMatch[1]) * 1000 // Convert to watts
-              console.log('Found PV generation:', currentStatus.pvGeneration, 'W')
-            }
-          }
-          
-          // Look for total consumption  
-          else if (cleanText.match(/total.*consumption|consumption.*total/i)) {
-            const powerMatch = cleanText.match(/(\d+\.?\d*)\s*kW/i)
-            if (powerMatch) {
-              currentStatus.consumption = parseFloat(powerMatch[1]) * 1000 // Convert to watts
-              console.log('Found consumption:', currentStatus.consumption, 'W')
-            }
-          }
-          
-          // Look for purchased electricity/grid feed
-          else if (cleanText.match(/purchased.*electricity|grid.*feed|feed.*in/i)) {
-            const powerMatch = cleanText.match(/(\d+\.?\d*)\s*kW/i)
-            if (powerMatch) {
-              currentStatus.purchasedElectricity = parseFloat(powerMatch[1]) * 1000 // Convert to watts
-              console.log('Found purchased electricity:', currentStatus.purchasedElectricity, 'W')
-            }
-          }
-          
-          // Look for battery charging
-          else if (cleanText.match(/battery.*charging|charging.*battery/i)) {
-            const powerMatch = cleanText.match(/(\d+\.?\d*)\s*kW/i)
-            if (powerMatch) {
-              currentStatus.batteryCharging = parseFloat(powerMatch[1]) * 1000 // Convert to watts
-              console.log('Found battery charging:', currentStatus.batteryCharging, 'W')
-            }
-          }
-          
-        } catch (e) {
-          // Skip problematic elements
-        }
+    energyMatches.forEach(match => {
+      const value = parseFloat(match.replace(/[^\d.]/g, ''))
+      if (value > 0 && value < 100) { // Reasonable range for daily solar generation
+        significantEnergies.push(value)
       }
-      
-      // Also look for battery state of charge percentage
-      const percentElements = await page.locator('*:has-text("%")').all()
-      for (const element of percentElements) {
-        try {
-          const text = await element.innerText()
-          if (text.match(/battery.*state|state.*charge|battery.*charge/i)) {
-            const socMatch = text.match(/(\d+)\s*%/)
-            if (socMatch) {
-              currentStatus.batterySOC = parseInt(socMatch[1])
-              console.log('Found battery SOC:', currentStatus.batterySOC, '%')
-            }
-          }
-        } catch (e) {
-          // Skip
-        }
-      }
-      
-    } catch (e) {
-      console.log('Error extracting current status from Sunny Portal:', e.message)
-    }
-    
-    // Look for forecast and recommended action section
-    const forecastSections = await page.locator('*:has-text("Forecast"), *:has-text("forecast"), *:has-text("Recommended Action"), *:has-text("recommended action")').all()
-    console.log('Found', forecastSections.length, 'potential forecast sections')
-    
-    // Look for chart/graph elements
-    const chartElements = await page.locator('canvas, svg, .chart, .graph, [id*="chart"], [class*="chart"], [id*="graph"], [class*="graph"]').all()
-    console.log('Found', chartElements.length, 'potential chart elements')
-    
-    // Try to find data in page content or JavaScript variables
-    const pageContent = await page.content()
-    
-    // Look for common forecast data patterns in the page
-    const forecastPatterns = [
-      /forecast[^}]*kWh?/gi,
-      /prediction[^}]*kWh?/gi,
-      /generation[^}]*kWh?/gi,
-      /estimated[^}]*kWh?/gi,
-      /["']forecast["'][^}]*["']data["']/gi,
-      /["']prediction["'][^}]*["']data["']/gi
-    ]
-    
-    let forecastDataFound = []
-    
-    for (const pattern of forecastPatterns) {
-      const matches = pageContent.match(pattern)
-      if (matches) {
-        forecastDataFound.push(...matches)
-      }
-    }
-    
-    console.log('Forecast data patterns found:', forecastDataFound.length)
-    for (const data of forecastDataFound) {
-      console.log('Forecast pattern:', data.substring(0, 200) + (data.length > 200 ? '...' : ''))
-    }
-    
-    // Try to execute JavaScript to get forecast data
-    const jsData = await page.evaluate(() => {
-      // Look for common global variables that might contain forecast data
-      const possibleVars = ['forecastData', 'chartData', 'graphData', 'predictionData', 'generationData']
-      const foundData = {}
-      
-      for (const varName of possibleVars) {
-        try {
-          if (window[varName] !== undefined) {
-            foundData[varName] = window[varName]
-          }
-        } catch (e) {
-          // Variable doesn't exist
-        }
-      }
-      
-      // Also try to find chart.js or other chart library data
-      if (window.Chart && window.Chart.instances) {
-        foundData.chartInstances = Object.keys(window.Chart.instances).length
-      }
-      
-      return foundData
     })
     
-    console.log('JavaScript data found:', JSON.stringify(jsData, null, 2))
-    
-    // Look for specific elements that might contain forecast values
-    const forecastElements = await page.locator('*:has-text("kWh"), *:has-text("kW"), *[data-value], *[data-forecast]').all()
-    console.log('Found', forecastElements.length, 'elements with energy values')
-    
-    const energyValues = []
-    for (let i = 0; i < Math.min(forecastElements.length, 20); i++) {
-      try {
-        const element = forecastElements[i]
-        const text = await element.innerText()
-        if (text.match(/\d+\.?\d*\s*(kWh?|MWh?)/i)) {
-          energyValues.push(text.trim())
-        }
-      } catch (e) {
-        // Skip problematic elements
-      }
+    if (significantEnergies.length > 0) {
+      // Use the largest reasonable value as our forecast
+      forecastSum = Math.max(...significantEnergies)
+      forecastFound = true
+      console.log(`Energy values found on page: ${significantEnergies.join(', ')} kWh`)
+      console.log(`Using maximum value as forecast: ${forecastSum} kWh`)
     }
     
-    console.log('Energy values found on page:', energyValues)
-    
-    // Try to find the specific "Forecast and Recommended Action" section
-    let forecastSum = 0
-    const forecastText = await page.locator('*:has-text("Forecast and Recommended Action")').first()
-    
-    if (await forecastText.count() > 0) {
-      console.log('Found "Forecast and Recommended Action" section')
-      
-      // Since the forecast chart is visual, let's try to extract any numerical data from the entire page
-      // that might be related to forecast generation for the remainder of the day
-      
-      try {
-        // Look for any JavaScript variables that might contain forecast data
-        const forecastData = await page.evaluate(() => {
-          // Try to find forecast-related data in global variables
-          const possibleVars = [
-            'forecastData', 
-            'chartData', 
-            'graphData', 
-            'predictionData', 
-            'generationForecast',
-            'pvForecast',
-            'solarForecast'
-          ]
-          
-          let foundData = {}
-          
-          for (const varName of possibleVars) {
-            try {
-              if (window[varName] !== undefined) {
-                foundData[varName] = window[varName]
-              }
-            } catch (e) {
-              // Variable doesn't exist
+    // Method 3: Try to execute JavaScript to get chart data
+    try {
+      console.log('Attempting to extract chart data via JavaScript...')
+      const chartData = await page.evaluate(() => {
+        // Look for common chart libraries or data structures
+        if (typeof window.chartData !== 'undefined') {
+          return window.chartData
+        }
+        
+        // Look for Highcharts
+        if (typeof window.Highcharts !== 'undefined' && window.Highcharts.charts) {
+          const charts = window.Highcharts.charts.filter(c => c)
+          if (charts.length > 0) {
+            return charts[0].series.map(s => s.data.map(d => d.y)).flat()
+          }
+        }
+        
+        // Look for D3 data
+        if (typeof window.d3 !== 'undefined') {
+          const svgs = document.querySelectorAll('svg')
+          for (const svg of svgs) {
+            if (svg.__data__) {
+              return svg.__data__
             }
           }
-          
-          // Also check if there are any data attributes or text content with forecast values
-          const elements = document.querySelectorAll('*[data-forecast], *[data-generation], *[data-prediction]')
-          if (elements.length > 0) {
-            foundData.dataElements = Array.from(elements).map(el => ({
-              tagName: el.tagName,
-              textContent: el.textContent,
-              dataset: el.dataset
-            }))
-          }
-          
-          return foundData
-        })
-        
-        console.log('Forecast JavaScript data:', JSON.stringify(forecastData, null, 2))
-        
-        // For now, since we can see this is working but the specific forecast data extraction 
-        // is complex, let's use a reasonable estimate based on current generation
-        // In practice, you might need to analyze the chart more deeply or find specific API calls
-        
-        // From the screenshot, I can see there's a forecast chart with weather icons
-        // A reasonable approach would be to:
-        // 1. Get current PV generation (1.84 kW from screenshot)
-        // 2. Estimate remaining daylight hours 
-        // 3. Calculate approximate remaining generation
-        
-        const currentTime = new Date()
-        const currentHour = currentTime.getHours()
-        const remainingDaylightHours = Math.max(0, 18 - currentHour) // Assume sunset around 6 PM
-        
-        // This is a simple estimation - in production you'd want more sophisticated parsing
-        if (remainingDaylightHours > 0) {
-          // Rough estimate: assume declining generation through the day
-          forecastSum = remainingDaylightHours * 0.5 // Conservative estimate
-          console.log(`Estimated forecast: ${remainingDaylightHours} hours remaining, ~${forecastSum} kWh`)
         }
         
-      } catch (e) {
-        console.log('Error extracting forecast data:', e.message)
+        // Look for any window variables containing "forecast" or "energy"
+        const forecastVars = []
+        for (const key in window) {
+          if (key.toLowerCase().includes('forecast') || key.toLowerCase().includes('energy') || key.toLowerCase().includes('chart')) {
+            try {
+              const value = window[key]
+              if (typeof value === 'object' && value !== null) {
+                forecastVars.push({key, value})
+              }
+            } catch (e) {
+              // Skip problematic variables
+            }
+          }
+        }
+        
+        return forecastVars.length > 0 ? forecastVars : null
+      })
+      
+      if (chartData) {
+        console.log('Found chart data via JavaScript:', JSON.stringify(chartData).substring(0, 200))
+        // Try to extract numerical values
+        const jsonString = JSON.stringify(chartData)
+        const numbers = jsonString.match(/\d+(?:\.\d+)?/g) || []
+        const validNumbers = numbers.map(n => parseFloat(n)).filter(n => n > 0 && n < 50)
+        if (validNumbers.length > 0) {
+          forecastSum = validNumbers.reduce((a, b) => a + b, 0) / validNumbers.length
+          forecastFound = true
+          console.log(`Extracted forecast from JavaScript data: ${forecastSum} kWh`)
+        }
       }
+    } catch (jsError) {
+      console.log('Could not extract data via JavaScript:', jsError.message)
     }
     
-    console.log('Calculated forecast sum:', forecastSum, 'kWh')
-    
-    return {
-      forecastSum,
-      energyValues,
-      forecastDataFound: forecastDataFound.length,
-      jsData,
-      timestamp: new Date().toISOString(),
-      currentStatus
+    if (!forecastFound) {
+      console.log('No forecast data found, using fallback of 0 kWh')
+      forecastSum = 0
     }
+    
+    console.log(`Calculated forecast sum: ${forecastSum} kWh`)
+    
+    return forecastSum
     
   } catch (error) {
-    console.log('Error getting forecast data:', error.message)
-    
-    // Take a screenshot for debugging
-    try {
-      await page.screenshot({ path: 'forecast-error.png', fullPage: true })
-      console.log('Error screenshot saved as forecast-error.png')
-    } catch (screenshotError) {
-      console.log('Could not take error screenshot:', screenshotError.message)
-    }
-    
-    throw error
+    console.error('Error in getForecastData:', error.message)
+    console.log('Returning 0 kWh as fallback')
+    return 0
   }
 }
 
 exports.getCurrentStatusFromSunnyPortal = async function (page) {
-  await page.setViewportSize({width: 1920, height: 1080})
+  console.log('🔍 Getting current power values from Sunny Portal...')
   
   const result = {
     pvGeneration: null,
-    consumption: null,  
+    consumption: null,
     purchasedElectricity: null,
     batteryCharging: null
   }
   
   try {
-    console.log('=== GETTING CURRENT STATUS FROM SUNNY PORTAL ===')
-    
-    // The page should already be logged in from forecast data collection
-    console.log('Current URL:', page.url())
-    
-    // Navigate to the live data page to get current status values
-    console.log('Navigating to Current Status page...')
-    
-    try {
-      // Look for "Current Status and Forecast" or similar link in sidebar
-      const statusLinks = [
-        'a:has-text("Current Status and Forecast")',
-        'a:has-text("Current Status")', 
-        'a:has-text("Live Data")',
-        'a:has-text("Dashboard")',
-        '*[href*="HoManLive"]',
-        '*[href*="live"]',
-        '*[href*="status"]'
-      ]
-      
-      let statusLink = null
-      
-      for (const selector of statusLinks) {
-        try {
-          statusLink = page.locator(selector).first()
-          if (await statusLink.count() > 0) {
-            console.log(`Found status link with selector: ${selector}`)
-            await statusLink.click()
-            await page.waitForTimeout(3000)
-            break
-          }
-        } catch (e) {
-          // Continue
-        }
-      }
-      
-      if (!statusLink || await statusLink.count() === 0) {
-        console.log('No status link found, trying direct navigation...')
-        // Try direct navigation to the live data page
-        const baseUrl = page.url().split('/')[0] + '//' + page.url().split('/')[2]
-        await page.goto(baseUrl + '/FixedPages/HoManLive.aspx')
-        await page.waitForTimeout(3000)
-      }
-      
-    } catch (e) {
-      console.log('Error navigating to status page:', e.message)
+    // Navigate to current status page if not already there
+    const currentUrl = page.url()
+    if (!currentUrl.includes('HoManLive.aspx')) {
+      console.log('Navigating to Current Status page...')
+      await page.goto('https://www.sunnyportal.com/FixedPages/HoManLive.aspx')
+      await page.waitForLoadState('networkidle', { timeout: 30000 })
+      await page.waitForTimeout(5000)
     }
     
-    console.log('Current URL after navigation to status:', page.url())
-    await page.screenshot({ path: 'sunny-portal-status.png', fullPage: true })
-    console.log('Status page screenshot saved')
+    console.log('Extracting current power values...')
     
-    // Extract current power values from the live data page
-    console.log('Extracting current power values from Sunny Portal...')
-    
+    // Method 1: Target specific battery status elements based on actual HTML structure
     try {
-      // Wait for initial page load
-      await page.waitForTimeout(5000)
-      
-      // Wait up to 30 seconds for power values to appear on the page
-      console.log('Waiting for power values to load (up to 30 seconds)...')
-      
-      let powerValuesFound = false
-      const maxWaitTime = 30000 // 30 seconds
-      const checkInterval = 2000 // Check every 2 seconds
-      let waitTime = 0
-      
-      while (!powerValuesFound && waitTime < maxWaitTime) {
-        // Look for any elements with power values (kW or W)
-        const powerElements = await page.locator('*:has-text("kW"), *:has-text(" W"), *:has-text("MW")').all()
-        console.log(`Check ${Math.floor(waitTime/1000)}s: Found ${powerElements.length} elements with power units`)
-        
-        if (powerElements.length > 3) { // Expect at least a few power values
-          powerValuesFound = true
-          console.log('✅ Power values detected on page')
-          break
-        }
-        
-        await page.waitForTimeout(checkInterval)
-        waitTime += checkInterval
-        
-        // Try refreshing or reloading if needed
-        if (waitTime === 10000) { // After 10 seconds, try a refresh
-          console.log('Refreshing page to load latest data...')
-          await page.reload({ waitUntil: 'networkidle' })
-          await page.waitForTimeout(3000)
+      // PV power generation - look for div with PV power generation label
+      const pvElement = page.locator('.batteryStatus-pv .batteryStatus-value')
+      if (await pvElement.count() > 0) {
+        const pvText = await pvElement.textContent()
+        const pvMatch = pvText.match(/(\d+(?:\.\d+)?)/)
+        if (pvMatch) {
+          const value = parseFloat(pvMatch[1])
+          // Check if kW unit is present in the parent element
+          const unitElement = page.locator('.batteryStatus-pv .batteryStatus-unit')
+          const unit = await unitElement.textContent()
+          result.pvGeneration = unit.includes('kW') ? value * 1000 : value
+          console.log(`✅ PV Generation: ${result.pvGeneration} W`)
         }
       }
       
-      if (!powerValuesFound) {
-        console.log('⚠️ Timeout waiting for power values to load')
-      }
-      
-      // Now extract the power values with multiple strategies
-      console.log('=== Strategy 1: Looking for prominent display values ===')
-      
-      // Look for large display values that are typically shown prominently
-      const displaySelectors = [
-        '*[class*="value"]',
-        '*[class*="display"]', 
-        '*[class*="current"]',
-        '*[class*="live"]',
-        '*[class*="power"]',
-        'span:has-text("kW")',
-        'div:has-text("kW")',
-        'td:has-text("kW")'
-      ]
-      
-      const foundValues = []
-      
-      for (const selector of displaySelectors) {
-        try {
-          const elements = await page.locator(selector).all()
-          console.log(`Selector ${selector}: ${elements.length} elements`)
-          
-          for (let i = 0; i < Math.min(elements.length, 10); i++) {
-            try {
-              const element = elements[i]
-              const text = await element.innerText()
-              const cleanText = text.replace(/\s+/g, ' ').trim()
-              
-              if (cleanText.match(/\d+[.,]?\d*\s*(k?W|MW)/i) && cleanText.length < 100) {
-                foundValues.push({
-                  text: cleanText,
-                  selector: selector,
-                  element: i
-                })
-                console.log(`  Found: "${cleanText}"`)
-              }
-            } catch (e) {
-              // Skip problematic elements
-            }
-          }
-        } catch (e) {
-          // Skip problematic selectors
+      // Total consumption
+      const consumptionElement = page.locator('.batteryStatus-consumption .batteryStatus-value')
+      if (await consumptionElement.count() > 0) {
+        const consumptionText = await consumptionElement.textContent()
+        const consumptionMatch = consumptionText.match(/(\d+(?:\.\d+)?)/)
+        if (consumptionMatch) {
+          const value = parseFloat(consumptionMatch[1])
+          const unitElement = page.locator('.batteryStatus-consumption .batteryStatus-unit')
+          const unit = await unitElement.textContent()
+          result.consumption = unit.includes('kW') ? value * 1000 : value
+          console.log(`✅ Total Consumption: ${result.consumption} W`)
         }
       }
       
-      console.log(`\n=== Strategy 2: Scanning all power-related text ===`)
+      // Purchased electricity (grid)
+      const gridElement = page.locator('.batteryStatus-grid .batteryStatus-value')
+      if (await gridElement.count() > 0) {
+        const gridText = await gridElement.textContent()
+        const gridMatch = gridText.match(/(\d+(?:\.\d+)?)/)
+        if (gridMatch) {
+          const value = parseFloat(gridMatch[1])
+          const unitElement = page.locator('.batteryStatus-grid .batteryStatus-unit')
+          const unit = await unitElement.textContent()
+          result.purchasedElectricity = unit.includes('kW') ? value * 1000 : value
+          console.log(`✅ Purchased Electricity: ${result.purchasedElectricity} W`)
+        }
+      }
       
-      // Get all text content and look for power patterns
-      const pageText = await page.textContent('body')
-      const powerPatterns = [
-        /(?:PV|Solar|Generation|Photovoltaic).*?([0-9.,]+)\s*(k?W|MW)/gi,
-        /(?:Consumption|Load|Usage|Demand).*?([0-9.,]+)\s*(k?W|MW)/gi,
-        /(?:Grid|Purchase|Import|Feed|Export).*?([0-9.,]+)\s*(k?W|MW)/gi,
-        /(?:Battery|Charge|Storage|Charging).*?([0-9.,]+)\s*(k?W|MW)/gi
-      ]
-      
-      const categories = ['PV Generation', 'Consumption', 'Grid Power', 'Battery Power']
-      
-      powerPatterns.forEach((pattern, idx) => {
-        let match
-        while ((match = pattern.exec(pageText)) !== null) {
-          let power = parseFloat(match[1].replace(',', '.'))
-          if (match[2].toLowerCase().includes('k')) {
-            power *= 1000 // Convert kW to W
-          } else if (match[2].toLowerCase().includes('m')) {
-            power *= 1000000 // Convert MW to W
-          }
+      // Battery charging/discharging power
+      const batteryElement = page.locator('.batteryStatus-battery .battery-power .batteryStatus-value')
+      if (await batteryElement.count() > 0) {
+        const batteryText = await batteryElement.textContent()
+        const batteryMatch = batteryText.match(/(\d+(?:\.\d+)?)/)
+        if (batteryMatch) {
+          const value = parseFloat(batteryMatch[1])
+          const unitElement = page.locator('.batteryStatus-battery .battery-power .batteryStatus-unit')
+          const unit = await unitElement.textContent()
+          const watts = unit.includes('kW') ? value * 1000 : value
           
-          console.log(`${categories[idx]} pattern match: ${match[0]} = ${power} W`)
-          
-          // Assign to result based on category
-          if (idx === 0 && !result.pvGeneration) {
-            result.pvGeneration = power
-            console.log(`✅ PV Generation: ${result.pvGeneration} W`)
-          } else if (idx === 1 && !result.consumption) {
-            result.consumption = power
-            console.log(`✅ Total Consumption: ${result.consumption} W`)
-          } else if (idx === 2 && !result.purchasedElectricity) {
-            result.purchasedElectricity = power
-            console.log(`✅ Purchased Electricity: ${result.purchasedElectricity} W`)
-          } else if (idx === 3 && !result.batteryCharging) {
-            result.batteryCharging = power
+          // Check if it's charging or discharging from the battery status
+          const batteryStatus = await page.locator('.batteryStatus-battery').getAttribute('data-status')
+          if (batteryStatus === 'charge') {
+            result.batteryCharging = watts
             console.log(`✅ Battery Charging: ${result.batteryCharging} W`)
-          }
-        }
-      })
-      
-      console.log(`\n=== Strategy 3: Structured data extraction ===`)
-      
-      // Look for structured data in tables or lists
-      const structuredElements = await page.locator('table, ul, ol, .data-table, .summary, .overview').all()
-      console.log(`Found ${structuredElements.length} structured elements`)
-      
-      for (const element of structuredElements) {
-        try {
-          const text = await element.innerText()
-          const lines = text.split('\n')
-          
-          for (const line of lines) {
-            const cleanLine = line.trim()
-            if (cleanLine.includes('kW') || cleanLine.includes(' W')) {
-              console.log(`Structured data: "${cleanLine}"`)
-              
-              // Extract power values from structured data
-              const powerMatch = cleanLine.match(/([0-9.,]+)\s*(k?W|MW)/i)
-              if (powerMatch) {
-                let power = parseFloat(powerMatch[1].replace(',', '.'))
-                if (powerMatch[2].toLowerCase().includes('k')) {
-                  power *= 1000
-                } else if (powerMatch[2].toLowerCase().includes('m')) {
-                  power *= 1000000
-                }
-                
-                const lowerLine = cleanLine.toLowerCase()
-                
-                // More specific matching
-                if ((lowerLine.includes('pv') || lowerLine.includes('solar') || lowerLine.includes('generation')) && !result.pvGeneration) {
-                  result.pvGeneration = power
-                  console.log(`✅ PV Generation (structured): ${result.pvGeneration} W`)
-                } else if ((lowerLine.includes('consumption') || lowerLine.includes('load') || lowerLine.includes('demand')) && !result.consumption) {
-                  result.consumption = power
-                  console.log(`✅ Consumption (structured): ${result.consumption} W`)
-                } else if ((lowerLine.includes('grid') || lowerLine.includes('purchase') || lowerLine.includes('import')) && !result.purchasedElectricity) {
-                  result.purchasedElectricity = power
-                  console.log(`✅ Purchased Electricity (structured): ${result.purchasedElectricity} W`)
-                } else if ((lowerLine.includes('battery') || lowerLine.includes('charg') || lowerLine.includes('storage')) && !result.batteryCharging) {
-                  result.batteryCharging = power
-                  console.log(`✅ Battery Charging (structured): ${result.batteryCharging} W`)
-                }
-              }
-            }
-          }
-        } catch (e) {
-          // Skip problematic structured elements
-        }
-      }
-      
-      // Final attempt: Look for any numeric values that might be power readings
-      if (!result.pvGeneration && !result.consumption && !result.purchasedElectricity && !result.batteryCharging) {
-        console.log(`\n=== Strategy 4: Fallback - extracting any significant power values ===`)
-        
-        const allPowerValues = foundValues.concat(
-          pageText.match(/\d+[.,]?\d*\s*(k?W|MW)/gi) || []
-        )
-        
-        console.log('All power values found:')
-        allPowerValues.forEach((value, idx) => {
-          if (idx < 15) {
-            const text = typeof value === 'string' ? value : value.text
-            console.log(`  ${idx + 1}: "${text}"`)
-          }
-        })
-        
-        // Try to assign the most reasonable values based on magnitude
-        const significantValues = allPowerValues
-          .map(v => {
-            const text = typeof v === 'string' ? v : v.text
-            const match = text.match(/([0-9.,]+)\s*(k?W|MW)/i)
-            if (match) {
-              let power = parseFloat(match[1].replace(',', '.'))
-              if (match[2].toLowerCase().includes('k')) {
-                power *= 1000
-              } else if (match[2].toLowerCase().includes('m')) {
-                power *= 1000000
-              }
-              return { text, power }
-            }
-            return null
-          })
-          .filter(v => v && v.power > 0 && v.power < 50000) // Reasonable range for home system
-          .sort((a, b) => b.power - a.power) // Sort by power descending
-        
-        console.log('Significant power values (filtered and sorted):')
-        significantValues.forEach((value, idx) => {
-          console.log(`  ${idx + 1}: ${value.text} = ${value.power} W`)
-        })
-        
-        // Assign based on typical magnitude expectations
-        if (significantValues.length > 0) {
-          // Largest value is likely consumption or generation
-          if (!result.consumption && significantValues[0]) {
-            result.consumption = significantValues[0].power
-            console.log(`✅ Consumption (fallback): ${result.consumption} W`)
-          }
-          
-          // Second largest might be PV generation
-          if (!result.pvGeneration && significantValues[1]) {
-            result.pvGeneration = significantValues[1].power
-            console.log(`✅ PV Generation (fallback): ${result.pvGeneration} W`)
-          }
-          
-          // Third might be battery charging
-          if (!result.batteryCharging && significantValues[2]) {
-            result.batteryCharging = significantValues[2].power
-            console.log(`✅ Battery Charging (fallback): ${result.batteryCharging} W`)
-          }
-          
-          // Calculate purchased electricity if we have consumption and PV
-          if (result.consumption && result.pvGeneration && !result.purchasedElectricity) {
-            result.purchasedElectricity = Math.max(0, result.consumption - result.pvGeneration)
-            console.log(`✅ Purchased Electricity (calculated): ${result.purchasedElectricity} W`)
+          } else {
+            // It's discharging - represent as negative charging
+            result.batteryCharging = -watts
+            console.log(`✅ Battery Discharging: ${result.batteryCharging} W`)
           }
         }
       }
       
     } catch (e) {
-      console.log('Error extracting power values:', e.message)
+      console.log('Error in structured data extraction:', e.message)
+    }
+    
+    // Method 2: Fallback text-based extraction if structured extraction didn't work
+    if (!result.pvGeneration && !result.consumption && !result.purchasedElectricity && !result.batteryCharging) {
+      console.log('Structured extraction failed, trying text-based fallback...')
+      const pageText = await page.textContent('body')
+      const lines = pageText.split('\n')
+      
+      for (const line of lines) {
+        const cleanLine = line.trim()
+        
+        // Look for PV generation patterns
+        if (!result.pvGeneration && cleanLine.match(/PV.*generation.*(\d+(?:\.\d+)?)\s*(?:k?W)/i)) {
+          const match = cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:k?W)/i)
+          if (match) {
+            const value = parseFloat(match[1])
+            result.pvGeneration = cleanLine.includes('kW') ? value * 1000 : value
+            console.log(`✅ PV Generation (fallback): ${result.pvGeneration} W`)
+          }
+        }
+        
+        // Look for consumption patterns
+        if (!result.consumption && cleanLine.match(/(?:total.*)?consumption.*(\d+(?:\.\d+)?)\s*(?:k?W)/i)) {
+          const match = cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:k?W)/i)
+          if (match) {
+            const value = parseFloat(match[1])
+            result.consumption = cleanLine.includes('kW') ? value * 1000 : value
+            console.log(`✅ Total Consumption (fallback): ${result.consumption} W`)
+          }
+        }
+        
+        // Look for purchased electricity patterns
+        if (!result.purchasedElectricity && cleanLine.match(/(?:purchased|grid.*import|from.*grid).*(\d+(?:\.\d+)?)\s*(?:k?W)/i)) {
+          const match = cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:k?W)/i)
+          if (match) {
+            const value = parseFloat(match[1])
+            result.purchasedElectricity = cleanLine.includes('kW') ? value * 1000 : value
+            console.log(`✅ Purchased Electricity (fallback): ${result.purchasedElectricity} W`)
+          }
+        }
+      }
+    }
+    
+    // Calculate missing values if we have enough data
+    if (!result.purchasedElectricity && result.consumption && result.pvGeneration) {
+      result.purchasedElectricity = Math.max(0, result.consumption - result.pvGeneration)
+      console.log(`✅ Purchased Electricity (calculated): ${result.purchasedElectricity} W`)
     }
     
     console.log('Sunny Portal current status extraction completed')
@@ -1441,6 +452,138 @@ exports.getCurrentStatusFromSunnyPortal = async function (page) {
   }
 }
 
+exports.getBatteryCapacityFromSunnyPortal = async function (page) {
+  try {
+    console.log('🔋 Getting battery capacity from Sunny Portal Dashboard...')
+    
+    // Navigate to Dashboard page
+    await page.goto('https://www.sunnyportal.com/FixedPages/Dashboard.aspx')
+    await page.waitForLoadState('networkidle', { timeout: 30000 })
+    await page.waitForTimeout(3000)
+    
+    // Look for the plantInfo widget containing battery capacity
+    const plantInfoWidget = page.locator('div.widgetBox[data-name="plantInfo"]')
+    await plantInfoWidget.waitFor({ timeout: 30000 })
+    
+    // Look for the nominal battery capacity text
+    const capacityText = await plantInfoWidget.locator('div:has-text("Nominal battery capacity:")').locator('+ div strong').textContent()
+    
+    if (capacityText) {
+      // Parse the capacity - it's in format like "31,200 Wh" 
+      const capacityMatch = capacityText.match(/([\d,]+)\s*Wh/i)
+      if (capacityMatch) {
+        // Convert Wh to kWh and remove commas
+        const capacityWh = parseInt(capacityMatch[1].replace(/,/g, ''))
+        const capacityKWh = capacityWh / 1000
+        
+        console.log(`✅ Found battery capacity: ${capacityText} = ${capacityKWh} kWh`)
+        return capacityKWh
+      }
+    }
+    
+    console.log('❌ Could not find battery capacity in plantInfo widget')
+    return null
+    
+  } catch (error) {
+    console.error('Error getting battery capacity from Sunny Portal:', error.message)
+    return null
+  }
+}
+
+exports.getStateOfChargeFromSunnyPortal = async function (page) {
+  try {
+    console.log('🔋 Getting State of Charge from Sunny Portal Dashboard...')
+    
+    // Stay on Dashboard or navigate to it
+    const currentUrl = page.url()
+    if (!currentUrl.includes('Dashboard.aspx')) {
+      await page.goto('https://www.sunnyportal.com/FixedPages/Dashboard.aspx')
+      await page.waitForLoadState('networkidle', { timeout: 30000 })
+      await page.waitForTimeout(3000)
+    }
+    
+    // Look for battery SOC information in various possible locations
+    // Method 1: Look for battery percentage in any widget
+    const socElements = page.locator(':has-text("%"):has-text("battery"), :has-text("Battery"):has-text("%")')
+    const socCount = await socElements.count()
+    
+    for (let i = 0; i < socCount; i++) {
+      try {
+        const text = await socElements.nth(i).textContent()
+        const socMatch = text.match(/(\d+(?:\.\d+)?)\s*%/)
+        if (socMatch) {
+          const soc = parseFloat(socMatch[1])
+          if (soc >= 0 && soc <= 100) {
+            console.log(`✅ Found SOC from dashboard: ${soc}%`)
+            return soc
+          }
+        }
+      } catch (e) {
+        // Continue to next element
+      }
+    }
+    
+    // Method 2: Look for specific battery status widget
+    try {
+      const batteryWidget = page.locator('div.widgetBox:has-text("Battery")')
+      if (await batteryWidget.count() > 0) {
+        const batteryText = await batteryWidget.textContent()
+        const socMatch = batteryText.match(/(\d+(?:\.\d+)?)\s*%/)
+        if (socMatch) {
+          const soc = parseFloat(socMatch[1])
+          if (soc >= 0 && soc <= 100) {
+            console.log(`✅ Found SOC from battery widget: ${soc}%`)
+            return soc
+          }
+        }
+      }
+    } catch (e) {
+      // Continue
+    }
+    
+    console.log('⚠️ Could not find SOC on Dashboard - will try Current Status page')
+    
+    // Method 3: Fallback to Current Status page where we know SOC is available
+    await page.goto('https://www.sunnyportal.com/FixedPages/HoManLive.aspx')
+    await page.waitForLoadState('networkidle', { timeout: 30000 })
+    await page.waitForTimeout(3000)
+    
+    // Look for SOC on the current status page
+    const currentStatusElements = page.locator('text=/\\d+(?:\\.\\d+)?\\s*%/')
+    const currentStatusCount = await currentStatusElements.count()
+    
+    for (let i = 0; i < currentStatusCount; i++) {
+      try {
+        const text = await currentStatusElements.nth(i).textContent()
+        const socMatch = text.match(/(\d+(?:\.\d+)?)\s*%/)
+        if (socMatch) {
+          const soc = parseFloat(socMatch[1])
+          // Look for values that make sense as SOC (0-100%)
+          if (soc >= 0 && soc <= 100) {
+            // Additional validation - check if it's near battery-related text
+            const parentText = await currentStatusElements.nth(i).locator('..').textContent()
+            if (parentText.toLowerCase().includes('battery') || 
+                parentText.toLowerCase().includes('charge') || 
+                parentText.toLowerCase().includes('storage')) {
+              console.log(`✅ Found SOC from current status page: ${soc}%`)
+              return soc
+            }
+          }
+        }
+      } catch (e) {
+        // Continue to next element
+      }
+    }
+    
+    console.log('❌ Could not find SOC on either Dashboard or Current Status page')
+    return null
+    
+  } catch (error) {
+    console.error('Error getting SOC from Sunny Portal:', error.message)
+    return null
+  }
+}
+
 exports.checkForceChargingFromSunnyPortal = async function (page) {
   try {
     console.log('🔍 Checking force charging windows on Sunny Portal...')
@@ -1450,9 +593,100 @@ exports.checkForceChargingFromSunnyPortal = async function (page) {
     await page.waitForLoadState('networkidle', { timeout: 30000 })
     await page.waitForTimeout(3000)
     
-    // Check for existing charging windows
+    // Check for existing charging windows in multiple ways
+    let windowCount = 0
+    let activeWindows = []
+    
+    // Method 1: Look for remove buttons (existing logic)
     const removeButtons = page.locator('img[src="../Tools/images/buttons/remove_segment_btn.png"]')
-    const windowCount = await removeButtons.count()
+    const removeButtonCount = await removeButtons.count()
+    
+    // Method 2: Look for charging time windows in the currentRatesList table
+    const chargingRows = page.locator('#ctl00_ContentPlaceHolder1_BatteryChargeView_currentRatesList tbody tr')
+    const tableRowCount = await chargingRows.count()
+    
+    // Method 3: Look for any table cell containing time patterns like "from XX:XX to XX:XX"
+    const timeWindowCells = page.locator('td:has-text("from"), td:has-text("to")')
+    const timeWindowCount = await timeWindowCells.count()
+    
+    // Method 4: Look for wattage values in charging windows (like "23000 Watt")
+    const wattageRows = page.locator('td:has-text("Watt")')
+    const wattageCount = await wattageRows.count()
+    
+    // Only count actual charging time windows, not just presence of text
+    // Priority: 1) Remove buttons (most reliable), 2) Actual table rows with time patterns
+    if (removeButtonCount > 0) {
+      windowCount = removeButtonCount
+    } else if (tableRowCount > 0) {
+      // Verify table rows actually contain time patterns
+      windowCount = 0
+      for (let i = 0; i < tableRowCount; i++) {
+        try {
+          const rowText = await chargingRows.nth(i).textContent()
+          if (rowText.match(/from (\d{2}):(\d{2}) to (\d{2}):(\d{2})/)) {
+            windowCount++
+          }
+        } catch (e) {
+          // Skip problematic rows
+        }
+      }
+    } else {
+      windowCount = 0
+    }
+    
+    console.log(`🔍 Force charging detection results:`)
+    console.log(`  - Remove buttons: ${removeButtonCount}`)
+    console.log(`  - Table rows: ${tableRowCount}`)
+    console.log(`  - Time window cells: ${timeWindowCount}`)
+    console.log(`  - Wattage cells: ${wattageCount}`)
+    console.log(`  - Final window count: ${windowCount}`)
+    
+    // Log detailed information about any found charging windows and check if they're currently active
+    const now = new Date()
+    const currentTime = now.getHours() * 60 + now.getMinutes() // Current time in minutes
+    
+    if (tableRowCount > 0) {
+      for (let i = 0; i < tableRowCount; i++) {
+        try {
+          const rowText = await chargingRows.nth(i).textContent()
+          console.log(`  - Charging window ${i + 1}: ${rowText.trim()}`)
+          
+          // Parse time windows to check if currently active (with 10-minute buffer)
+          const timeMatch = rowText.match(/from (\d{2}):(\d{2}) to (\d{2}):(\d{2})/)
+          if (timeMatch) {
+            const startHour = parseInt(timeMatch[1])
+            const startMin = parseInt(timeMatch[2])
+            const endHour = parseInt(timeMatch[3])
+            const endMin = parseInt(timeMatch[4])
+            
+            const startTime = startHour * 60 + startMin
+            const endTime = endHour * 60 + endMin
+            const endTimeWithBuffer = endTime + 10 // Add 10-minute buffer
+            
+            // Handle day boundary for end time
+            const isActiveNow = (currentTime >= startTime && currentTime <= endTimeWithBuffer) ||
+                              (endTime < startTime && (currentTime >= startTime || currentTime <= endTimeWithBuffer))
+            
+            activeWindows.push({
+              start: `${timeMatch[1]}:${timeMatch[2]}`,
+              end: `${timeMatch[3]}:${timeMatch[4]}`,
+              endWithBuffer: `${String(Math.floor(endTimeWithBuffer / 60) % 24).padStart(2, '0')}:${String(endTimeWithBuffer % 60).padStart(2, '0')}`,
+              isActive: isActiveNow,
+              rawText: rowText.trim()
+            })
+            
+            console.log(`    Active now (with 10min buffer): ${isActiveNow ? 'YES' : 'NO'} (${timeMatch[1]}:${timeMatch[2]} - ${timeMatch[3]}:${timeMatch[4]} + 10min buffer)`)
+          }
+        } catch (e) {
+          console.log(`  - Could not read charging window ${i + 1}`)
+        }
+      }
+    }
+    
+    // Check if any windows are currently active
+    const hasActiveWindows = activeWindows.some(w => w.isActive)
+    console.log(`🕐 Current time: ${String(Math.floor(currentTime / 60)).padStart(2, '0')}:${String(currentTime % 60).padStart(2, '0')}`)
+    console.log(`⚡ Force charging currently active (with buffer): ${hasActiveWindows ? 'YES' : 'NO'}`)
     
     console.log('FORCE_CHARGE_WINDOWS_FOUND:', windowCount)
     console.log(`✅ Force charging check: ${windowCount} time windows found - Force charging is ${windowCount > 0 ? 'ON' : 'OFF'}`)

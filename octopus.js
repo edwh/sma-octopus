@@ -42,12 +42,17 @@ function isWithinOctopusGoWindow(forceWindow = false) {
     return true
   }
   
+  // Get current time in GMT (UTC) since Octopus Go times are always GMT
   const now = new Date()
-  const currentTime = now.getHours() * 100 + now.getMinutes()
-  debug('Current time calculation', { 
-    now: now.toISOString(), 
-    hours: now.getHours(), 
-    minutes: now.getMinutes(), 
+  const gmtHours = now.getUTCHours()
+  const gmtMinutes = now.getUTCMinutes()
+  const currentTime = gmtHours * 100 + gmtMinutes
+  debug('Current time calculation (GMT)', { 
+    now: now.toISOString(),
+    localTime: `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`,
+    gmtTime: `${gmtHours.toString().padStart(2, '0')}:${gmtMinutes.toString().padStart(2, '0')}`,
+    gmtHours, 
+    gmtMinutes, 
     currentTime 
   })
   
@@ -56,7 +61,7 @@ function isWithinOctopusGoWindow(forceWindow = false) {
   const [endHour, endMin] = OCTOPUS_GO_END_TIME.split(':').map(Number)
   const startTime = startHour * 100 + startMin
   const endTime = endHour * 100 + endMin
-  debug('Time window parsing', {
+  debug('Time window parsing (all times in GMT)', {
     OCTOPUS_GO_START_TIME,
     OCTOPUS_GO_END_TIME,
     startHour, startMin, startTime,

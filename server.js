@@ -7,6 +7,63 @@ const path = require('path')
 const util = require('util')
 const exec = util.promisify(require('child_process').exec)
 
+// File lock functionality
+const LOCK_FILE = path.join(__dirname, '.server.lock')
+const LOCK_TIMEOUT = 15 * 60 * 1000 // 15 minutes in milliseconds
+
+function acquireLock() {
+  try {
+    // Check if lock file exists and is recent
+    if (fs.existsSync(LOCK_FILE)) {
+      const lockStat = fs.statSync(LOCK_FILE)
+      const lockAge = Date.now() - lockStat.mtime.getTime()
+      
+      if (lockAge < LOCK_TIMEOUT) {
+        console.log('🔒 Another instance is already running. Exiting.')
+        console.log(`Lock file age: ${Math.round(lockAge / 1000)}s (timeout: ${LOCK_TIMEOUT / 1000}s)`)
+        process.exit(1)
+      } else {
+        console.log('🔓 Stale lock file detected, removing...')
+        fs.unlinkSync(LOCK_FILE)
+      }
+    }
+    
+    // Create lock file with current timestamp
+    fs.writeFileSync(LOCK_FILE, JSON.stringify({
+      pid: process.pid,
+      startTime: new Date().toISOString(),
+      hostname: require('os').hostname()
+    }))
+    
+    console.log('🔒 Lock acquired for process', process.pid)
+    
+    // Clean up lock file on exit
+    process.on('exit', releaseLock)
+    process.on('SIGINT', () => { releaseLock(); process.exit(0) })
+    process.on('SIGTERM', () => { releaseLock(); process.exit(0) })
+    process.on('uncaughtException', (err) => { 
+      console.error('Uncaught exception:', err)
+      releaseLock()
+      process.exit(1) 
+    })
+    
+  } catch (error) {
+    console.error('❌ Failed to acquire lock:', error.message)
+    process.exit(1)
+  }
+}
+
+function releaseLock() {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      fs.unlinkSync(LOCK_FILE)
+      console.log('🔓 Lock released')
+    }
+  } catch (error) {
+    console.error('Warning: Failed to release lock:', error.message)
+  }
+}
+
 // Parse command line arguments
 const args = process.argv.slice(2)
 const FORCE_OCTOPUS_GO_WINDOW = args.includes('--force-window') || args.includes('-f')
@@ -51,6 +108,7 @@ function debug(message, data = null) {
     }
   }
 }
+
 
 // Configuration
 const CHECK_INTERVAL_MINUTES = parseInt(process.env.CHECK_INTERVAL_MINUTES) || 5
@@ -160,7 +218,6 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
         },
         environment: {
           DEBUG: process.env.DEBUG,
-          inverterIP: process.env.inverterIP,
           OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED
         }
       })
@@ -219,7 +276,6 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
         },
         environment: {
           DEBUG: process.env.DEBUG,
-          inverterIP: process.env.inverterIP,
           OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED
         }
       })
@@ -293,10 +349,11 @@ async function getBatteryCapacity() {
   debug('getBatteryCapacity called (legacy fallback)', { cached: batteryCapacity !== null })
   if (batteryCapacity === null) {
     try {
-      debug('Battery capacity not cached, fetching from inverter')
-      batteryCapacity = await SMA.getBatteryCapacity()
+      debug('Battery capacity not cached, fetching from Sunny Portal')
+      const data = await SMA.getAllInverterData()
+      batteryCapacity = data.capacity
       if (batteryCapacity !== null) {
-        debug('Battery capacity successfully retrieved', batteryCapacity)
+        debug('Battery capacity successfully retrieved from Sunny Portal', batteryCapacity)
         saveState() // Save the capacity so we don't need to fetch it again
       }
     } catch (error) {
@@ -308,12 +365,14 @@ async function getBatteryCapacity() {
 }
 
 async function main () {
+  // Acquire file lock to prevent concurrent executions
+  acquireLock()
+  
   debug('===== MAIN FUNCTION STARTED =====')
   debug('Environment variables loaded', {
     DEBUG: process.env.DEBUG,
     OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
     EMAIL_ENABLED: process.env.EMAIL_ENABLED,
-    inverterIP: process.env.inverterIP,
     FORCE_OCTOPUS_GO_WINDOW
   })
   
@@ -327,6 +386,14 @@ async function main () {
   debug('All inverter data retrieved', inverterData)
   
   const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState, forceChargingWindows } = inverterData
+  
+  debug('Extracted data components', {
+    stateOfCharge,
+    currentConsumption,
+    currentCapacity,
+    currentChargingState,
+    forceChargingWindows
+  })
   
   debug('Charging state from combined data', { 
     currentChargingState, 
@@ -512,7 +579,6 @@ async function runMainLoop() {
         },
         environment: {
           DEBUG: process.env.DEBUG,
-          inverterIP: process.env.inverterIP,
           OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
           OCTOPUS_GO_START_TIME: process.env.OCTOPUS_GO_START_TIME,
           OCTOPUS_GO_END_TIME: process.env.OCTOPUS_GO_END_TIME,
