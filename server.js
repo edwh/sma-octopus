@@ -385,14 +385,15 @@ async function main () {
   const inverterData = await SMA.getAllInverterData()
   debug('All inverter data retrieved', inverterData)
   
-  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState, forceChargingWindows } = inverterData
+  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState, forceChargingWindows, forecastedGeneration } = inverterData
   
   debug('Extracted data components', {
     stateOfCharge,
     currentConsumption,
     currentCapacity,
     currentChargingState,
-    forceChargingWindows
+    forceChargingWindows,
+    forecastedGeneration
   })
   
   debug('Charging state from combined data', { 
@@ -407,17 +408,8 @@ async function main () {
     saveState()
   }
   
-  // Get forecasted generation from Sunny Portal
-  debug('Getting forecasted generation from Sunny Portal')
-  let forecastedGeneration = null
-  try {
-    forecastedGeneration = await SMA.getForecastedGeneration()
-    debug('Forecasted generation retrieved', { forecastedGeneration })
-  } catch (error) {
-    debug('Error getting forecast data', error)
-    console.log('⚠️ Could not get forecast data, proceeding with original logic:', error.message)
-    // Continue with null forecast - the logic will handle this gracefully
-  }
+  // Forecast data already extracted from getAllInverterData() above
+  debug('Using forecasted generation from combined data', { forecastedGeneration })
   
   debug('Calling Octopus shouldCharge logic with forecast data', { 
     stateOfCharge, 

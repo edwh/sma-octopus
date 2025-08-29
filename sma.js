@@ -16,6 +16,13 @@ function debug(message, data = null) {
   }
 }
 
+// Cache for forecast data to avoid duplicate Playwright runs
+let forecastCache = {
+  data: null,
+  timestamp: null,
+  maxAge: 15 * 60 * 1000 // 15 minutes in milliseconds
+}
+
 
 
 exports.getAllInverterData = async function () {
@@ -29,7 +36,8 @@ exports.getAllInverterData = async function () {
     purchasedElectricity: null,
     batteryCharging: null,
     isCharging: null,
-    forceChargingWindows: null
+    forceChargingWindows: null,
+    forecastedGeneration: null
   }
   
   try {
@@ -124,6 +132,45 @@ exports.getAllInverterData = async function () {
             } else if (cleanLine.includes('ERROR')) {
               debug('Error detected in force charging check')
               data.forceChargingWindows = null
+            }
+          }
+          
+          // Parse forecast data
+          if (cleanLine.includes('Calculated forecast sum:')) {
+            const match = cleanLine.match(/Calculated forecast sum:\s*([0-9.]+)\s*kWh/)
+            if (match) {
+              const rawForecast = parseFloat(match[1])
+              // Apply forecast multiplier if configured
+              const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100') / 100
+              data.forecastedGeneration = rawForecast * forecastMultiplier
+              debug('Found and adjusted forecast sum from Sunny Portal', { 
+                rawForecast, 
+                multiplier: forecastMultiplier, 
+                adjustedForecast: data.forecastedGeneration 
+              })
+            }
+          }
+          
+          // Also look for individual energy values if forecast sum not found
+          if (!data.forecastedGeneration && cleanLine.includes('Energy values found on page:')) {
+            debug('Found energy values line for forecast', { line: cleanLine })
+            const energyMatches = cleanLine.match(/(\d+\.?\d*)\s*kWh?/gi) || []
+            let calculatedSum = 0
+            for (const match of energyMatches) {
+              const value = parseFloat(match.replace(/[^\d.]/g, ''))
+              if (value > 0 && value < 100) { // Reasonable range for daily generation
+                calculatedSum += value
+              }
+            }
+            if (calculatedSum > 0) {
+              // Apply forecast multiplier if configured
+              const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100') / 100
+              data.forecastedGeneration = calculatedSum * forecastMultiplier
+              debug('Calculated and adjusted forecast from energy values', { 
+                rawSum: calculatedSum, 
+                multiplier: forecastMultiplier, 
+                adjustedForecast: data.forecastedGeneration 
+              })
             }
           }
         }
@@ -223,125 +270,4 @@ exports.getAllInverterData = async function () {
 
 
 
-exports.getForecastedGeneration = async function () {
-  debug('Getting forecasted generation from Sunny Portal')
-  
-  try {
-    debug('Executing getForecastData.test.js via Playwright - this may take 2-3 minutes...')
-    const startTime = Date.now()
-    const {stdout, stderr} = await exec('npx playwright test getForecastData.test.js')
-    const executionTime = ((Date.now() - startTime) / 1000).toFixed(1)
-    debug(`Playwright forecast test completed in ${executionTime} seconds`, {
-      stdoutLength: stdout.length,
-      stderrLength: stderr.length
-    })
-    
-    // Parse the forecast output
-    const lines = stdout.split('\n')
-    debug('Parsing forecast output lines', { lineCount: lines.length })
-    
-    let forecastSum = 0
-    let forecastFound = false
-    
-    for (const line of lines) {
-      // Remove ANSI color codes for easier parsing
-      const cleanLine = line.replace(/\x1B\[[0-9;]*[mK]/g, '').replace(/\x1A\x2K/g, '')
-      
-      // Look for forecast sum in the output
-      if (cleanLine.includes('Calculated forecast sum:')) {
-        const forecastMatch = cleanLine.match(/Calculated forecast sum:\s*([0-9.]+)\s*kWh/)
-        if (forecastMatch) {
-          forecastSum = parseFloat(forecastMatch[1])
-          forecastFound = true
-          debug('Found forecast sum in output', { line: cleanLine, forecastSum })
-        }
-      }
-      
-      // Also look for individual energy values if sum not found
-      if (!forecastFound && cleanLine.includes('Energy values found on page:')) {
-        debug('Found energy values line', { line: cleanLine })
-        // Try to parse individual values and sum them
-        const energyMatches = cleanLine.match(/(\d+\.?\d*)\s*kWh?/gi) || []
-        let calculatedSum = 0
-        for (const match of energyMatches) {
-          const value = parseFloat(match.replace(/[^\d.]/g, ''))
-          if (value > 0 && value < 100) { // Reasonable range for daily generation
-            calculatedSum += value
-          }
-        }
-        if (calculatedSum > 0) {
-          forecastSum = calculatedSum
-          forecastFound = true
-          debug('Calculated forecast from energy values', { calculatedSum })
-        }
-      }
-    }
-    
-    if (!forecastFound) {
-      debug('No forecast data found in output, defaulting to 0')
-      forecastSum = 0
-    }
-    
-    // Apply forecast multiplier if configured
-    const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100') / 100
-    const adjustedForecast = forecastSum * forecastMultiplier
-    
-    debug('Final forecast result', { 
-      rawForecast: forecastSum, 
-      multiplier: forecastMultiplier, 
-      adjustedForecast 
-    })
-    
-    if (forecastMultiplier !== 1.0) {
-      console.log('Raw forecasted generation:', forecastSum, 'kWh')
-      console.log('Forecast multiplier applied:', (forecastMultiplier * 100).toFixed(0) + '%')
-      console.log('Adjusted forecasted generation for remainder of day:', adjustedForecast.toFixed(2), 'kWh')
-    } else {
-      console.log('Forecasted generation for remainder of day:', adjustedForecast.toFixed(2), 'kWh')
-    }
-    
-    return adjustedForecast
-    
-  } catch (e) {
-    debug('Error executing forecast test', e)
-    console.log('Error getting forecast data:', e.message)
-    
-    // Send error email with enhanced troubleshooting
-    await Email.sendErrorEmail('Sunny Portal Forecast Data Collection Failed', e.message, {
-      script: 'getForecastData.test.js',
-      operation: 'Getting solar generation forecast from Sunny Portal',
-      error: e.message,
-      stackTrace: e.stack,
-      timestamp: new Date().toISOString(),
-      severity: 'MEDIUM',
-      impact: 'Solar forecast not available - charging decisions will use standard target SOC without forecast optimization',
-      troubleshooting: [
-        'Check Sunny Portal login credentials',
-        'Verify Sunny Portal URL: ' + (process.env.SUNNY_PORTAL_URL || 'https://www.sunnyportal.com/'),
-        'Check if Current Status and Forecast page is accessible',
-        'Verify forecast data is available on Sunny Portal',
-        'Check if forecast chart/data is loading properly',
-        'Review JavaScript data extraction logic',
-        'Verify network connectivity to Sunny Portal'
-      ],
-      systemInfo: {
-        timestamp: new Date().toISOString(),
-        nodeVersion: process.version,
-        platform: process.platform,
-        arch: process.arch
-      },
-      environment: {
-        DEBUG: process.env.DEBUG,
-        SUNNY_PORTAL_URL: process.env.SUNNY_PORTAL_URL,
-        SUNNY_PORTAL_USERNAME: process.env.SUNNY_PORTAL_USERNAME ? 'SET' : 'NOT_SET',
-        SUNNY_PORTAL_FORECAST_MULTIPLIER: process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100'
-      }
-    })
-    
-    // Return 0 as a safe fallback
-    debug('Returning 0 forecast as fallback due to error')
-    console.log('⚠️ WARNING: Using fallback forecast of 0 kWh due to data collection failure')
-    return 0
-  }
-}
 

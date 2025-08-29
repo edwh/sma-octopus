@@ -18,12 +18,12 @@ async function showForecast() {
       isCharging: currentChargingState,
       pvGeneration,
       purchasedElectricity,
-      batteryCharging
+      batteryCharging,
+      forecastedGeneration
     } = inverterData
     
-    // Get forecast data
-    console.log('🌞 Getting solar forecast from Sunny Portal...')
-    const forecastedGeneration = await SMA.getForecastedGeneration()
+    // Forecast data already extracted from getAllInverterData() above
+    console.log('🌞 Using solar forecast from combined data collection...')
     
     // Get charging decision
     console.log('🤖 Calculating charging decision...\n')
