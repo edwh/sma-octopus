@@ -37,6 +37,10 @@ Copy `.env.example` to `.env` and configure the following variables:
 * `SUNNY_PORTAL_USERNAME` - Your Sunny Portal email address
 * `SUNNY_PORTAL_PASSWORD` - Your Sunny Portal password
 * `SUNNY_PORTAL_URL` - Sunny Portal URL (default: https://www.sunnyportal.com/)
+* `SUNNY_PORTAL_FORECAST_MULTIPLIER` - Forecast adjustment percentage (default: 100) - use to calibrate forecast accuracy:
+  - `100` = Use forecast as-is
+  - `80` = Reduce forecast by 20% (conservative)
+  - `120` = Increase forecast by 20% (optimistic)
 
 ## Octopus Go Configuration
 
@@ -49,7 +53,22 @@ Copy `.env.example` to `.env` and configure the following variables:
 
 ## Battery Configuration
 
-* `OCTOPUS_GO_TARGET_SOC` - Target state of charge percentage - only charge if battery is below this (default: 40)
+The system uses monthly target SOC values to account for seasonal variations in energy usage and solar generation:
+
+* `OCTOPUS_GO_MORNING_TARGET_SOC` - Monthly morning target SOC (CSV format) - ensures minimum charge for daily use, excludes forecast adjustments
+* `OCTOPUS_GO_EVENING_TARGET_SOC` - Monthly evening target SOC (CSV format) - ensures charge for overnight/next morning, includes forecast adjustments
+
+**Format**: 12 comma-separated values for Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec
+
+**Default values**:
+- Morning: `45,45,45,30,30,30,30,30,30,45,45,45` (Higher in winter months Oct-Mar)
+- Evening: `60,60,60,55,55,55,55,55,55,60,60,60` (Higher in winter months Oct-Mar)
+
+**Charging Logic**:
+1. **Morning Target**: Fixed value per month, no solar forecast adjustment
+2. **Evening Target**: Reduced by expected solar generation (forecasted kWh ÷ battery capacity)
+3. **Final Target**: Higher of morning target and adjusted evening target
+4. **Seasonal Adjustment**: Winter months (Oct-Mar) have higher targets for increased heating/lighting demand and reduced solar generation
 
 ## Consumption Thresholds
 
@@ -130,6 +149,17 @@ Use `npm run forecast` to see a comprehensive overview of:
 * **Cost Savings**: Estimated savings from forecast-optimized charging
 * **Octopus Go Window**: Current time vs cheap rate periods
 
+**Technical Details:**
+
+The system extracts hourly forecast data from Sunny Portal using advanced DOM parsing:
+
+1. **Forecast Chart Parsing**: Identifies `.forecastColumn[data-hasqtip]` elements representing hourly forecast bars
+2. **Tooltip Extraction**: Hovers over each column to trigger tooltips containing detailed hourly data
+3. **Time Filtering**: Compares tooltip time ranges (e.g., "9:00 AM - 10:00 AM") with current local time from Sunny Portal
+4. **Net Energy Calculation**: Extracts "Difference" values from tooltips (PV generation - consumption) for accurate net energy available for battery
+5. **Future Hours Only**: Only includes hours that haven't started yet to provide remaining daily forecast
+6. **Forecast Summation**: Sums all future hourly "Difference" values to get total net energy expected for rest of day
+
 Example output:
 ```
 🔋 SMA Octopus Charging Forecast
@@ -140,9 +170,8 @@ Example output:
 ⚡ Current consumption: N/A W
 🔌 Currently charging: No
 
-=== SOLAR FORECAST ===
-☀️ Expected generation today: 3 kWh
-📈 Forecast impact: Reduces target SOC by 9.6%
+=== SOLAR CHARGING ===
+🔋 Expected net charging today: 13.1 kWh (42.0% of 31.2 kWh battery)
 
 === CHARGING DECISION ===
 🎯 Original target SOC: 30%
@@ -165,17 +194,21 @@ The system supports two charging algorithms:
 When `OCTOPUS_GO_ENABLED=true`, the system uses intelligent time-based charging optimized for Octopus Go tariffs with solar forecast integration:
 
 1. **Solar Forecast Integration**: 
-    - Automatically retrieves solar generation forecasts from Sunny Portal
+    - Automatically retrieves detailed hourly solar generation forecasts from Sunny Portal
+    - Extracts "Difference" values (PV generation - consumption) for each future hour to determine net energy available for battery charging
+    - Only includes future hours (after current time) in forecast calculations to avoid counting past generation
     - Adjusts target SOC based on expected solar generation for remainder of day
     - Reduces unnecessary charging when solar will provide sufficient energy
     - Calculates cost savings from forecast-optimized decisions
 
 2. **Time Window Check**: Only charges during the configured cheap rate window (default 00:30-05:30)
 
-3. **Dynamic SOC Target**: 
-    - Base target SOC configurable (default 30%)
-    - Automatically reduced based on solar forecast: `Adjusted Target = Original Target - (Forecast kWh / Battery Capacity kWh) × 100%`
-    - Prevents overcharging when solar generation will meet daily needs
+3. **Monthly Dynamic SOC Targets**: 
+    - **Morning Target**: Monthly values (default 30-45% seasonal) - minimum charge for daily use
+    - **Evening Target**: Monthly values (default 55-60% seasonal) - charge for overnight/next morning
+    - **Forecast Adjustment**: Evening target automatically reduced based on solar forecast: `Adjusted Evening Target = Evening Target - (Forecast kWh / Battery Capacity kWh) × 100%`
+    - **Final Target**: Uses higher of morning target and adjusted evening target
+    - **Seasonal Variation**: Higher targets in winter months (Oct-Mar) for increased demand and reduced solar
 
 4. **Consumption-Aware Logic**:
     - Won't **start** charging if current consumption > `CONSUMPTION_START_THRESHOLD` (3kW)

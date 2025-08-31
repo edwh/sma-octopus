@@ -27,7 +27,32 @@ const OCTOPUS_GO_END_TIME = process.env.OCTOPUS_GO_END_TIME || '05:30'
 const OCTOPUS_GO_RATE = parseFloat(process.env.OCTOPUS_GO_RATE) || 8.5
 const CONSUMPTION_START_THRESHOLD = parseFloat(process.env.CONSUMPTION_START_THRESHOLD) || 3000
 const CONSUMPTION_STOP_THRESHOLD = parseFloat(process.env.CONSUMPTION_STOP_THRESHOLD) || 6000
-const OCTOPUS_GO_TARGET_SOC = parseFloat(process.env.OCTOPUS_GO_TARGET_SOC) || 40
+// Parse monthly CSV targets - format: Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec
+const MORNING_TARGETS_CSV = process.env.OCTOPUS_GO_MORNING_TARGET_SOC || '45,45,45,30,30,30,30,30,30,45,45,45'
+const EVENING_TARGETS_CSV = process.env.OCTOPUS_GO_EVENING_TARGET_SOC || '60,60,60,55,55,55,55,55,55,60,60,60'
+
+const MONTHLY_MORNING_TARGETS = MORNING_TARGETS_CSV.split(',').map(v => parseFloat(v.trim()))
+const MONTHLY_EVENING_TARGETS = EVENING_TARGETS_CSV.split(',').map(v => parseFloat(v.trim()))
+
+// Function to get current month's targets
+function getCurrentMonthTargets() {
+  const currentMonth = new Date().getMonth() // 0-11 (Jan=0, Dec=11)
+  
+  const morningTarget = MONTHLY_MORNING_TARGETS[currentMonth] || 30
+  const eveningTarget = MONTHLY_EVENING_TARGETS[currentMonth] || 55
+  
+  debug('Monthly target selection', {
+    month: currentMonth + 1, // Display as 1-12
+    monthName: new Date().toLocaleString('default', { month: 'long' }),
+    morningTarget,
+    eveningTarget,
+    allMorningTargets: MONTHLY_MORNING_TARGETS,
+    allEveningTargets: MONTHLY_EVENING_TARGETS
+  })
+  
+  return { morningTarget, eveningTarget }
+}
+
 
 // Helper function to check if current time is within Octopus Go window
 function isWithinOctopusGoWindow(forceWindow = false) {
@@ -82,6 +107,8 @@ function isWithinOctopusGoWindow(forceWindow = false) {
   return withinWindow
 }
 
+exports.isWithinOctopusGoWindow = isWithinOctopusGoWindow
+
 exports.getPrices = async function () {
   debug('Getting Octopus Agile prices')
   let ret = null
@@ -119,17 +146,23 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     const inTimeWindow = isWithinOctopusGoWindow(forceWindow)
     debug('Time window check result', inTimeWindow)
     
+    // Get current month's targets
+    const { morningTarget, eveningTarget } = getCurrentMonthTargets()
+    
     if (!inTimeWindow) {
       debug('Outside Octopus Go window - rejecting charge')
       console.log('Outside Octopus Go window - not charging')
+      
       return {
         shouldCharge: false,
         forecastData: {
           forecastedGeneration,
-          adjustedTargetSOC: OCTOPUS_GO_TARGET_SOC,
-          originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+          adjustedTargetSOC: eveningTarget,
+          originalTargetSOC: eveningTarget,
           forecastAdjustment: 0,
-          currentConsumption
+          currentConsumption,
+          morningTarget,
+          eveningTarget
         }
       }
     }
@@ -137,60 +170,82 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     debug('Within Octopus Go window - checking SOC and consumption thresholds')
     console.log('Within Octopus Go window (', OCTOPUS_GO_START_TIME, '-', OCTOPUS_GO_END_TIME, ')')
     
-    // Calculate adjusted target SOC based on forecasted generation
-    let adjustedTargetSOC = OCTOPUS_GO_TARGET_SOC
+    // During Octopus Go window, determine target needed for upcoming periods
+    // We need to charge enough for both morning use and evening (considering forecast)
+    
+    // Calculate evening target with forecast adjustment
+    let eveningTargetAdjusted = eveningTarget
     let forecastAdjustment = 0
     
     if (forecastedGeneration !== null && forecastedGeneration > 0) {
-      // Convert forecasted kWh to percentage of battery capacity
-      // We need to get battery capacity for this calculation
-      // For now, we'll make a reasonable assumption or fallback
       const assumedBatteryCapacity = 31.2 // kWh - can be made configurable
       forecastAdjustment = (forecastedGeneration / assumedBatteryCapacity) * 100
-      adjustedTargetSOC = OCTOPUS_GO_TARGET_SOC - forecastAdjustment
+      eveningTargetAdjusted = eveningTarget - forecastAdjustment
       
-      // Ensure adjusted target doesn't go below 0
-      adjustedTargetSOC = Math.max(0, adjustedTargetSOC)
+      // Evening target shouldn't go below morning target
+      eveningTargetAdjusted = Math.max(morningTarget, eveningTargetAdjusted)
       
-      debug('Forecast-adjusted target SOC calculation', {
-        originalTarget: OCTOPUS_GO_TARGET_SOC,
+      const monthName = new Date().toLocaleString('default', { month: 'long' })
+      debug('Evening target with forecast adjustment', {
+        month: monthName,
+        baseEveningTarget: eveningTarget,
         forecastedGeneration,
         assumedBatteryCapacity,
         forecastAdjustment,
-        adjustedTargetSOC
+        eveningTargetAdjusted,
+        morningTargetFloor: morningTarget
       })
       
+      console.log('📅', monthName, 'charging targets')
       console.log('📈 Forecasted generation:', forecastedGeneration, 'kWh')
-      console.log('🔄 Target SOC adjusted from', OCTOPUS_GO_TARGET_SOC, '% to', adjustedTargetSOC.toFixed(1), '% (reduction:', forecastAdjustment.toFixed(1), '%)')
+      console.log('🌙 Evening target adjusted from', eveningTarget, '% to', eveningTargetAdjusted.toFixed(1), '% (reduction:', forecastAdjustment.toFixed(1), '%, minimum:', morningTarget, '%)')
     } else {
-      debug('No forecast data available - using original target SOC')
-      console.log('⚠️ No forecast data available - using original target SOC of', OCTOPUS_GO_TARGET_SOC, '%')
+      const monthName = new Date().toLocaleString('default', { month: 'long' })
+      debug('No forecast data - using base evening target', { month: monthName })
+      console.log('📅', monthName, 'charging targets')
+      console.log('⚠️ No forecast data - using base evening target of', eveningTarget, '%')
     }
+    
+    // Use the higher of morning target and adjusted evening target
+    const adjustedTargetSOC = Math.max(morningTarget, eveningTargetAdjusted)
+    
+    debug('Final target calculation during Octopus Go window', {
+      morningTarget,
+      eveningTargetAdjusted,
+      finalTarget: adjustedTargetSOC
+    })
+    
+    console.log('🎯 Charging targets: Morning', morningTarget, '%, Evening', eveningTargetAdjusted.toFixed(1), '% → Using', adjustedTargetSOC.toFixed(1), '%')
     
     // Check if battery SOC is already at or above adjusted target
     if (stateOfCharge >= adjustedTargetSOC) {
       debug('Battery SOC at or above adjusted target - not charging', { 
         stateOfCharge, 
         adjustedTargetSOC, 
-        originalTarget: OCTOPUS_GO_TARGET_SOC,
-        forecastAdjustment 
+        morningTarget: morningTargetSOC,
+        eveningTargetAdjusted,
+        forecastAdjustment
       })
-      console.log('🔋 Battery SOC (', stateOfCharge, '%) is at or above adjusted target (', adjustedTargetSOC.toFixed(1), '%) - not charging')
+      console.log('🔋 Battery SOC (', stateOfCharge, '%) is at or above target (', adjustedTargetSOC.toFixed(1), '%) - not charging')
       if (forecastedGeneration > 0) {
-        console.log('💡 Charging stopped early due to', forecastedGeneration, 'kWh expected solar generation today')
+        console.log('💡 Target optimized due to', forecastedGeneration, 'kWh expected solar generation today')
       }
       return {
         shouldCharge: false,
         forecastData: {
           forecastedGeneration,
           adjustedTargetSOC,
-          originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+          originalTargetSOC: eveningTarget,
           forecastAdjustment,
-          currentConsumption
+          currentConsumption,
+          morningTarget,
+          eveningTarget,
+          eveningTargetAdjusted,
+          rationale: `Battery SOC (${stateOfCharge}%) exceeds target (${adjustedTargetSOC.toFixed(1)}%). Monthly targets for ${new Date().toLocaleString('default', { month: 'long' })}: Morning ${morningTarget}%, Evening ${eveningTarget}%${forecastedGeneration > 0 ? `, adjusted to ${eveningTargetAdjusted.toFixed(1)}% due to ${forecastedGeneration} kWh forecast` : ''}.`
         }
       }
     }
-    debug('Battery SOC below adjusted target - continuing with charging logic', { stateOfCharge, adjustedTargetSOC, originalTarget: OCTOPUS_GO_TARGET_SOC })
+    debug('Battery SOC below adjusted target - continuing with charging logic', { stateOfCharge, adjustedTargetSOC, morningTarget, eveningTargetAdjusted })
     
     // Check consumption thresholds if provided
     if (currentConsumption !== null) {
@@ -209,9 +264,13 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
           forecastData: {
             forecastedGeneration,
             adjustedTargetSOC,
-            originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+            originalTargetSOC: eveningTarget,
             forecastAdjustment,
-            currentConsumption
+            currentConsumption,
+            morningTarget,
+            eveningTarget,
+            eveningTargetAdjusted,
+            rationale: `Consumption (${currentConsumption}W) exceeds start threshold (${CONSUMPTION_START_THRESHOLD}W). Would charge to ${adjustedTargetSOC.toFixed(1)}% (monthly targets for ${new Date().toLocaleString('default', { month: 'long' })}: Morning ${morningTarget}%, Evening ${eveningTarget}%${forecastedGeneration > 0 ? `, adjusted ${eveningTargetAdjusted.toFixed(1)}%` : ''}) but consumption too high to start.`
           }
         }
       } else if (isCurrentlyCharging && currentConsumption > CONSUMPTION_STOP_THRESHOLD) {
@@ -222,9 +281,13 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
           forecastData: {
             forecastedGeneration,
             adjustedTargetSOC,
-            originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+            originalTargetSOC: eveningTarget,
             forecastAdjustment,
-            currentConsumption
+            currentConsumption,
+            morningTarget,
+            eveningTarget,
+            eveningTargetAdjusted,
+            rationale: `Consumption (${currentConsumption}W) exceeds stop threshold (${CONSUMPTION_STOP_THRESHOLD}W). Was charging to ${adjustedTargetSOC.toFixed(1)}% (monthly targets for ${new Date().toLocaleString('default', { month: 'long' })}: Morning ${morningTarget}%, Evening ${eveningTarget}%${forecastedGeneration > 0 ? `, adjusted ${eveningTargetAdjusted.toFixed(1)}%` : ''}) but consumption too high to continue.`
           }
         }
       }
@@ -236,13 +299,14 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     // Within time window, SOC below adjusted target, and consumption is acceptable - charge
     debug('All Octopus Go conditions met - approving charge', { 
       adjustedTargetSOC, 
-      originalTarget: OCTOPUS_GO_TARGET_SOC, 
+      morningTarget,
+      eveningTargetAdjusted, 
       forecastAdjustment 
     })
     if (forecastedGeneration > 0) {
-      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (adjusted target:', adjustedTargetSOC.toFixed(1), '%, original:', OCTOPUS_GO_TARGET_SOC, '%), forecast:', forecastedGeneration, 'kWh, consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
+      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (target:', adjustedTargetSOC.toFixed(1), '%, morning:', morningTarget, '%, evening:', eveningTargetAdjusted.toFixed(1), '%), forecast:', forecastedGeneration, 'kWh, consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
     } else {
-      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (target:', OCTOPUS_GO_TARGET_SOC, '%), consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
+      console.log('✅ Conditions met for Octopus Go charging - SOC:', stateOfCharge, '% (target:', adjustedTargetSOC.toFixed(1), '%, morning:', morningTarget, '%, evening:', eveningTarget, '%), consumption:', currentConsumption || 'not checked', 'W, currently charging:', isCurrentlyCharging)
     }
     
     return {
@@ -250,9 +314,13 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
       forecastData: {
         forecastedGeneration,
         adjustedTargetSOC,
-        originalTargetSOC: OCTOPUS_GO_TARGET_SOC,
+        originalTargetSOC: eveningTarget,
         forecastAdjustment,
-        currentConsumption
+        currentConsumption,
+        morningTarget,
+        eveningTarget,
+        eveningTargetAdjusted,
+        rationale: `Charging approved to ${adjustedTargetSOC.toFixed(1)}% (SOC: ${stateOfCharge}%). Monthly targets for ${new Date().toLocaleString('default', { month: 'long' })}: Morning ${morningTarget}%, Evening ${eveningTarget}%${forecastedGeneration > 0 ? ` (adjusted to ${eveningTargetAdjusted.toFixed(1)}% with ${forecastedGeneration} kWh forecast, saving ${forecastAdjustment.toFixed(1)}% charge)` : ''}. Consumption: ${currentConsumption || 'not checked'}W.`
       }
     }
   }

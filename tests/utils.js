@@ -216,72 +216,357 @@ exports.getForecastData = async function (page) {
     })
     
     if (significantEnergies.length > 0) {
-      // Use the largest reasonable value as our forecast
-      forecastSum = Math.max(...significantEnergies)
-      forecastFound = true
+      const maxValue = Math.max(...significantEnergies)
+      const sumValue = significantEnergies.reduce((a, b) => a + b, 0)
+      
       console.log(`Energy values found on page: ${significantEnergies.join(', ')} kWh`)
-      console.log(`Using maximum value as forecast: ${forecastSum} kWh`)
+      console.log(`Max value: ${maxValue} kWh, Sum: ${sumValue} kWh`)
+      
+      // Don't use page content method - it finds wrong values
+      // Always proceed to tooltip extraction for accurate hourly data
+      console.log(`Page content found values but proceeding to tooltip extraction for accuracy`)
+      console.log(`Page values would be: ${sumValue} kWh (but these may not be the correct hourly forecasts)`)
     }
     
-    // Method 3: Try to execute JavaScript to get chart data
-    try {
-      console.log('Attempting to extract chart data via JavaScript...')
-      const chartData = await page.evaluate(() => {
-        // Look for common chart libraries or data structures
-        if (typeof window.chartData !== 'undefined') {
-          return window.chartData
-        }
+    // Method 3: Extract forecast data from tooltips (most accurate method)
+    if (!forecastFound) {
+      try {
+        console.log('Attempting to extract forecast data from tooltips...')
         
-        // Look for Highcharts
-        if (typeof window.Highcharts !== 'undefined' && window.Highcharts.charts) {
-          const charts = window.Highcharts.charts.filter(c => c)
-          if (charts.length > 0) {
-            return charts[0].series.map(s => s.data.map(d => d.y)).flat()
+        // Target the specific forecast column structure from Sunny Portal
+        console.log('Looking for forecast columns with qtip data...')
+        const forecastColumns = await page.locator('.forecastColumn[data-hasqtip]').all()
+        console.log(`Found ${forecastColumns.length} forecast columns with qtip data`)
+        
+        // Get current local time from Sunny Portal to filter future hours only
+        let currentLocalTime = null
+        try {
+          const timeIndicator = await page.locator('.timeIndicatorLabel').first()
+          const timeText = await timeIndicator.textContent()
+          console.log(`Time indicator text: ${timeText}`)
+          
+          // Extract time from format like "Today - 8:55:04 AM" or "Today - 08:48:07"
+          const timeMatch = timeText.match(/(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?/)
+          if (timeMatch) {
+            let hours = parseInt(timeMatch[1])
+            const minutes = parseInt(timeMatch[2])
+            const period = timeMatch[4]
+            
+            // Handle AM/PM conversion to 24-hour format
+            if (period === 'PM' && hours !== 12) hours += 12
+            if (period === 'AM' && hours === 12) hours = 0
+            
+            currentLocalTime = hours * 100 + minutes // Convert to HHMM format
+            console.log(`Current local time: ${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} (${currentLocalTime})`)
           }
+        } catch (e) {
+          console.log('Could not extract current time from page, including all forecast hours')
         }
         
-        // Look for D3 data
-        if (typeof window.d3 !== 'undefined') {
-          const svgs = document.querySelectorAll('svg')
-          for (const svg of svgs) {
-            if (svg.__data__) {
-              return svg.__data__
+        let pvGenerationValues = []
+        
+        // Hover over each forecast column to trigger its tooltip
+        for (let i = 0; i < forecastColumns.length; i++) {
+          try {
+            console.log(`Hovering over forecast column ${i + 1}/${forecastColumns.length}...`)
+            await forecastColumns[i].hover({ timeout: 10000 })
+            await page.waitForTimeout(2000) // Wait for tooltip to appear
+            
+            // Get the qtip ID from the data-hasqtip attribute
+            const qtipId = await forecastColumns[i].getAttribute('data-hasqtip')
+            console.log(`Column ${i + 1} has qtip ID: ${qtipId}`)
+            
+            // Look for the corresponding tooltip
+            const tooltipSelectors = [
+              `#qtip-${qtipId}`,
+              `[aria-describedby="qtip-${qtipId}"]`,
+              `.qtip[data-qtip-id="${qtipId}"]`,
+              `.qtip .forecastTooltip`
+            ]
+            
+            let foundTooltip = false
+            for (const selector of tooltipSelectors) {
+              try {
+                const tooltips = await page.locator(selector).all()
+                if (tooltips.length > 0) {
+                  console.log(`Found tooltip for column ${i + 1} using selector: ${selector}`)
+                  const tooltip = tooltips[0]
+                  const text = await tooltip.textContent({ timeout: 5000 })
+                  console.log(`Column ${i + 1} tooltip content:`, text.substring(0, 200))
+                  
+                  // Extract time range from tooltip (e.g., "9:00 AM - 10:00 AM")
+                  let includeThisHour = true
+                  if (currentLocalTime !== null) {
+                    const timeMatch = text.match(/(\d{1,2}):00\s*(AM|PM)\s*-\s*(\d{1,2}):00\s*(AM|PM)/)
+                    if (timeMatch) {
+                      let startHour = parseInt(timeMatch[1])
+                      const startPeriod = timeMatch[2]
+                      let endHour = parseInt(timeMatch[3])
+                      const endPeriod = timeMatch[4]
+                      
+                      // Convert to 24-hour format
+                      if (startPeriod === 'PM' && startHour !== 12) startHour += 12
+                      if (startPeriod === 'AM' && startHour === 12) startHour = 0
+                      if (endPeriod === 'PM' && endHour !== 12) endHour += 12
+                      if (endPeriod === 'AM' && endHour === 12) endHour = 0
+                      
+                      const hourStartTime = startHour * 100 // Convert to HHMM format
+                      const hourEndTime = endHour * 100 // Convert to HHMM format
+                      
+                      // Only include hours where the END time hasn't been reached yet
+                      // This excludes both past hours and the current hour that's in progress
+                      includeThisHour = hourEndTime > currentLocalTime
+                      
+                      console.log(`Hour ${startHour.toString().padStart(2, '0')}:00-${endHour.toString().padStart(2, '0')}:00 (ends ${hourEndTime}) vs current ${currentLocalTime}: ${includeThisHour ? 'INCLUDE' : 'SKIP'}`)
+                    }
+                  }
+                  
+                  if (includeThisHour) {
+                    // Look for "Difference:" value (net energy for battery)
+                    const differenceMatch = text.match(/Difference.*?(\d+(?:\.\d+)?)\s*kWh/i)
+                    if (differenceMatch) {
+                      const value = parseFloat(differenceMatch[1])
+                      if (!isNaN(value) && value >= 0) { // Allow 0 values
+                        pvGenerationValues.push(value)
+                        foundTooltip = true
+                        console.log(`✅ Column ${i + 1}: Found difference value: ${value} kWh (FUTURE HOUR)`)
+                        break // Found what we need for this column
+                      }
+                    }
+                  } else {
+                    console.log(`⏰ Column ${i + 1}: Skipping past hour`)
+                    foundTooltip = true // Don't try fallback for past hours
+                    break
+                  }
+                  
+                  // If no difference found, try PV generation as fallback
+                  if (!foundTooltip) {
+                    const pvMatch = text.match(/Estimated PV power generation.*?(\d+(?:\.\d+)?)\s*kWh/i)
+                    if (pvMatch) {
+                      const value = parseFloat(pvMatch[1])
+                      if (!isNaN(value) && value >= 0) {
+                        pvGenerationValues.push(value)
+                        foundTooltip = true
+                        console.log(`⚠️ Column ${i + 1}: Using PV generation as fallback: ${value} kWh`)
+                        break
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                console.log(`Tooltip selector "${selector}" failed: ${e.message}`)
+              }
             }
+            
+            if (!foundTooltip) {
+              console.log(`❌ No tooltip found for column ${i + 1}`)
+            }
+            
+          } catch (e) {
+            console.log(`Failed to hover over column ${i + 1}: ${e.message}`)
           }
         }
         
-        // Look for any window variables containing "forecast" or "energy"
-        const forecastVars = []
-        for (const key in window) {
-          if (key.toLowerCase().includes('forecast') || key.toLowerCase().includes('energy') || key.toLowerCase().includes('chart')) {
+        // If we found values in tooltips, sum them up
+        if (pvGenerationValues.length > 0) {
+          forecastSum = pvGenerationValues.reduce((sum, val) => sum + val, 0)
+          forecastFound = true
+          console.log(`Extracted ${pvGenerationValues.length} PV generation values from tooltips:`, pvGenerationValues)
+          console.log(`Total forecast from tooltips: ${forecastSum} kWh`)
+        } else {
+          console.log('No PV generation values found in tooltips, trying static tooltip extraction...')
+          
+          // Try to find tooltips that might already be visible or in DOM
+          console.log('Searching for static tooltips in DOM...')
+          const staticTooltipSelectors = [
+            '.qtip .forecastTooltip',
+            '.qtip .tooltipRight',
+            '.qtip-content table',
+            '.tooltip table',
+            '[class*="tooltip"] table',
+            '[id*="qtip"] table',
+            '.chart-tooltip table',
+            '.forecastTooltip',
+            'table.forecastTooltip',
+            // More aggressive selectors
+            '*:contains("Estimated PV power generation")',
+            '*:contains("kWh")'
+          ]
+          
+          for (const selector of staticTooltipSelectors) {
             try {
-              const value = window[key]
-              if (typeof value === 'object' && value !== null) {
-                forecastVars.push({key, value})
+              const tooltips = await page.locator(selector).all()
+              console.log(`Static selector "${selector}" found ${tooltips.length} elements`)
+              for (const tooltip of tooltips) {
+                const text = await tooltip.textContent()
+                console.log(`Static tooltip content (${selector}):`, text.substring(0, 300))
+                
+                // Look for Difference values first (net energy available for battery)
+                const differenceMatches = text.match(/Difference.*?(\d+(?:\.\d+)?)\s*kWh/gi)
+                if (differenceMatches) {
+                  console.log(`Found ${differenceMatches.length} Difference matches in static tooltip:`, differenceMatches)
+                  for (const match of differenceMatches) {
+                    const valueMatch = match.match(/(\d+(?:\.\d+)?)\s*kWh/i)
+                    if (valueMatch) {
+                      const value = parseFloat(valueMatch[1])
+                      if (!isNaN(value) && value > 0) {
+                        pvGenerationValues.push(value)
+                        console.log(`✅ Found static difference value: ${value} kWh`)
+                      }
+                    }
+                  }
+                } else {
+                  // Fallback: Look for PV generation values
+                  const pvMatches = text.match(/Estimated PV power generation.*?(\d+(?:\.\d+)?)\s*kWh/gi)
+                  if (pvMatches) {
+                    console.log(`Found ${pvMatches.length} PV matches in static tooltip:`, pvMatches)
+                    for (const match of pvMatches) {
+                      const valueMatch = match.match(/(\d+(?:\.\d+)?)\s*kWh/i)
+                      if (valueMatch) {
+                        const value = parseFloat(valueMatch[1])
+                        if (!isNaN(value) && value > 0) {
+                          pvGenerationValues.push(value)
+                          console.log(`⚠️ Found static PV generation (fallback): ${value} kWh`)
+                        }
+                      }
+                    }
+                  } else {
+                    // Try to find any kWh values as a broader search
+                    const kwhMatches = text.match(/(\d+(?:\.\d+)?)\s*kWh/gi)
+                    if (kwhMatches && kwhMatches.length > 0) {
+                      console.log(`Found kWh values (no specific label):`, kwhMatches)
+                    }
+                  }
+                }
               }
             } catch (e) {
-              // Skip problematic variables
+              console.log(`Static tooltip selector "${selector}" failed:`, e.message)
+            }
+          }
+          
+          if (pvGenerationValues.length > 0) {
+            forecastSum = pvGenerationValues.reduce((sum, val) => sum + val, 0)
+            forecastFound = true
+            console.log(`Total forecast from static tooltips: ${forecastSum} kWh`)
+          } else {
+            // Last resort: search entire page content for difference values
+            console.log('No tooltips found, searching entire page content...')
+            try {
+              const pageContent = await page.content()
+              // First try to find Difference values (net energy for battery)
+              const differenceMatches = pageContent.match(/Difference[^0-9]*(\d+(?:\.\d+)?)\s*kWh/gi)
+              if (differenceMatches) {
+                console.log(`Found ${differenceMatches.length} Difference matches in page content:`, differenceMatches)
+                for (const match of differenceMatches) {
+                  const valueMatch = match.match(/(\d+(?:\.\d+)?)\s*kWh/i)
+                  if (valueMatch) {
+                    const value = parseFloat(valueMatch[1])
+                    if (!isNaN(value) && value > 0 && value < 50) { // Reasonable range
+                      pvGenerationValues.push(value)
+                      console.log(`✅ Found page difference value: ${value} kWh`)
+                    }
+                  }
+                }
+              } else {
+                // Fallback: Look for PV generation values
+                const pvMatches = pageContent.match(/Estimated PV power generation[^0-9]*(\d+(?:\.\d+)?)\s*kWh/gi)
+                if (pvMatches) {
+                  console.log(`Found ${pvMatches.length} PV generation matches in page content:`, pvMatches)
+                  for (const match of pvMatches) {
+                    const valueMatch = match.match(/(\d+(?:\.\d+)?)\s*kWh/i)
+                    if (valueMatch) {
+                      const value = parseFloat(valueMatch[1])
+                      if (!isNaN(value) && value > 0 && value < 50) { // Reasonable range
+                        pvGenerationValues.push(value)
+                        console.log(`⚠️ Found page PV generation (fallback): ${value} kWh`)
+                      }
+                    }
+                  }
+                }
+              }
+              
+              if (pvGenerationValues.length > 0) {
+                forecastSum = pvGenerationValues.reduce((sum, val) => sum + val, 0)
+                forecastFound = true
+                console.log(`Total forecast from page content: ${forecastSum} kWh`)
+              } else {
+                console.log('No difference or PV generation values found in page content')
+                // Show some page content for debugging
+                const contentSample = pageContent.substring(0, 2000)
+                console.log('Page content sample:', contentSample)
+              }
+            } catch (e) {
+              console.log('Page content search failed:', e.message)
             }
           }
         }
         
-        return forecastVars.length > 0 ? forecastVars : null
-      })
-      
-      if (chartData) {
-        console.log('Found chart data via JavaScript:', JSON.stringify(chartData).substring(0, 200))
-        // Try to extract numerical values
-        const jsonString = JSON.stringify(chartData)
-        const numbers = jsonString.match(/\d+(?:\.\d+)?/g) || []
-        const validNumbers = numbers.map(n => parseFloat(n)).filter(n => n > 0 && n < 50)
-        if (validNumbers.length > 0) {
-          forecastSum = validNumbers.reduce((a, b) => a + b, 0) / validNumbers.length
-          forecastFound = true
-          console.log(`Extracted forecast from JavaScript data: ${forecastSum} kWh`)
-        }
+      } catch (error) {
+        console.log('Tooltip extraction failed:', error.message)
       }
-    } catch (jsError) {
-      console.log('Could not extract data via JavaScript:', jsError.message)
+    }
+    
+    // Method 4: Try to execute JavaScript to get chart data (fallback)
+    if (!forecastFound) {
+      try {
+        console.log('Attempting to extract chart data via JavaScript...')
+        const chartData = await page.evaluate(() => {
+          // Look for common chart libraries or data structures
+          if (typeof window.chartData !== 'undefined') {
+            return window.chartData
+          }
+          
+          // Look for Highcharts
+          if (typeof window.Highcharts !== 'undefined' && window.Highcharts.charts) {
+            const charts = window.Highcharts.charts.filter(c => c)
+            if (charts.length > 0) {
+              return charts[0].series.map(s => s.data.map(d => d.y)).flat()
+            }
+          }
+          
+          // Look for D3 data
+          if (typeof window.d3 !== 'undefined') {
+            const svgs = document.querySelectorAll('svg')
+            for (const svg of svgs) {
+              if (svg.__data__) {
+                return svg.__data__
+              }
+            }
+          }
+          
+          // Look for any window variables containing "forecast" or "energy"
+          const forecastVars = []
+          for (const key in window) {
+            if (key.toLowerCase().includes('forecast') || key.toLowerCase().includes('energy') || key.toLowerCase().includes('chart')) {
+              try {
+                const value = window[key]
+                if (typeof value === 'object' && value !== null) {
+                  forecastVars.push({key, value})
+                }
+              } catch (e) {
+                // Skip problematic variables
+              }
+            }
+          }
+          
+          return forecastVars.length > 0 ? forecastVars : null
+        })
+        
+        if (chartData) {
+          console.log('Found chart data via JavaScript:', JSON.stringify(chartData).substring(0, 200))
+          // Try to extract numerical values
+          const jsonString = JSON.stringify(chartData)
+          const numbers = jsonString.match(/\d+(?:\.\d+)?/g) || []
+          const validNumbers = numbers.map(n => parseFloat(n)).filter(n => n > 0 && n < 50)
+          if (validNumbers.length > 0) {
+            forecastSum = validNumbers.reduce((a, b) => a + b, 0) / validNumbers.length
+            forecastFound = true
+            console.log(`Extracted forecast from JavaScript data: ${forecastSum} kWh`)
+          }
+        }
+      } catch (jsError) {
+        console.log('Could not extract data via JavaScript:', jsError.message)
+      }
     }
     
     if (!forecastFound) {

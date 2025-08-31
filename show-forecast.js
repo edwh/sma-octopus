@@ -19,7 +19,8 @@ async function showForecast() {
       pvGeneration,
       purchasedElectricity,
       batteryCharging,
-      forecastedGeneration
+      forecastedGeneration,
+      capacity: batteryCapacity
     } = inverterData
     
     // Forecast data already extracted from getAllInverterData() above
@@ -51,9 +52,16 @@ async function showForecast() {
     console.log(`🕐 Octopus Go window: ${startTime} - ${endTime} (GMT)`)
     console.log(`🪟 Currently in window: ${isWithinWindow() ? '✅ YES' : '❌ NO'}`)
     
-    console.log('\n=== SOLAR FORECAST ===')
+    console.log('\n=== SOLAR CHARGING ===')
     if (forecastedGeneration > 0) {
-      console.log(`☀️ Expected generation today: ${forecastedGeneration} kWh`)
+      // Calculate battery percentage equivalent using actual battery capacity
+      const batteryPercentage = batteryCapacity ? (forecastedGeneration / batteryCapacity) * 100 : null
+      
+      if (batteryPercentage !== null) {
+        console.log(`🔋 Expected net charging today: ${forecastedGeneration} kWh (${batteryPercentage.toFixed(1)}% of ${batteryCapacity} kWh battery)`)
+      } else {
+        console.log(`🔋 Expected net charging today: ${forecastedGeneration} kWh (battery capacity unknown)`)
+      }
       
       // Show multiplier if it's not 100%
       const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100')
@@ -61,16 +69,33 @@ async function showForecast() {
         console.log(`🔧 Forecast adjustment: ${forecastMultiplier}% applied`)
       }
     } else {
-      console.log(`⚠️ No forecast data available`)
+      console.log(`⚠️ No solar charging forecast available`)
     }
     
     console.log('\n=== CHARGING DECISION ===')
-    console.log(`🎯 Original target SOC for end-of-day: ${forecastData.originalTargetSOC}%`)
-    if (forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
-      console.log(`🎯 Adjusted target SOC: ${forecastData.adjustedTargetSOC.toFixed(1)}%`)
+    
+    // Show monthly targets if available
+    if (forecastData.morningTarget && forecastData.eveningTarget) {
+      const currentMonth = new Date().toLocaleString('default', { month: 'long' })
+      console.log(`📅 ${currentMonth} Monthly Targets:`)
+      console.log(`🌅 Morning: ${forecastData.morningTarget}% (daily minimum)`)
+      console.log(`🌙 Evening: ${forecastData.eveningTarget}% (overnight needs)`)
+      
+      if (forecastData.eveningTargetAdjusted && forecastData.eveningTargetAdjusted !== forecastData.eveningTarget) {
+        console.log(`🌙 Evening Adjusted: ${forecastData.eveningTargetAdjusted.toFixed(1)}% (forecast reduction: ${forecastData.forecastAdjustment.toFixed(1)}%)`)
+      }
+      
+      console.log(`🎯 Final Target: ${forecastData.adjustedTargetSOC.toFixed(1)}% (higher of morning and adjusted evening)`)
+    } else {
+      // Fallback for backward compatibility
+      console.log(`🎯 Original target SOC for end-of-day: ${forecastData.originalTargetSOC}%`)
+      if (forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
+        console.log(`🎯 Adjusted target SOC: ${forecastData.adjustedTargetSOC.toFixed(1)}%`)
+      }
+      console.log(`📈 Forecast impact: Reduces target SOC by ${forecastData.forecastAdjustment.toFixed(1)}%`)
     }
+    
     console.log(`⚡ Should force charge: ${shouldCharge ? '✅ YES' : '❌ NO'}`)
-    console.log(`📈 Forecast impact: Reduces target SOC by ${forecastData.forecastAdjustment.toFixed(1)}%`)
     
     // Add explanation if forecast adjustment is 0 but there is forecast data
     if (forecastedGeneration > 0 && forecastData.forecastAdjustment === 0 && stateOfCharge >= forecastData.originalTargetSOC) {

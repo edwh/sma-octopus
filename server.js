@@ -142,7 +142,8 @@ process.on('SIGHUP', () => gracefulShutdown('SIGHUP'))   // Terminal closed
 let currentChargingState = false
 let chargingStartTime = null
 let chargingStartSOC = null
-let batteryCapacity = null // Cache battery capacity to avoid repeated lookups
+let batteryCapacity = null
+let chargingStartNotificationSent = false
 const stateFile = path.join(__dirname, 'charging-state.json')
 
 // Load previous state
@@ -155,8 +156,9 @@ function loadState() {
       chargingStartTime = state.startTime ? new Date(state.startTime) : null
       chargingStartSOC = state.startSOC || null
       batteryCapacity = state.batteryCapacity || null
-      debug('Successfully loaded state', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
-      console.log('Loaded previous state:', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
+      chargingStartNotificationSent = state.chargingStartNotificationSent || false
+      debug('Successfully loaded state', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent })
+      console.log('Loaded previous state:', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent })
     } else {
       debug('No previous state file found, using defaults')
     }
@@ -174,7 +176,8 @@ function saveState() {
       charging: currentChargingState,
       startTime: chargingStartTime?.toISOString(),
       startSOC: chargingStartSOC,
-      batteryCapacity: batteryCapacity
+      batteryCapacity: batteryCapacity,
+      chargingStartNotificationSent: chargingStartNotificationSent
     }
     debug('State to save', state)
     fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
@@ -238,16 +241,24 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     debug('Updated charging state variables', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity })
     saveState()
     
-    debug('Sending charging started email with forecast data')
-    const startEmailData = {
-      forecastedGeneration: forecastData.forecastedGeneration,
-      adjustedTargetSOC: forecastData.adjustedTargetSOC,
-      originalTargetSOC: forecastData.originalTargetSOC,
-      forecastAdjustment: forecastData.forecastAdjustment,
-      currentSOC: stateOfCharge,
-      currentConsumption: forecastData.currentConsumption
+    // Only send notification if we haven't already sent one for this charging session
+    if (!chargingStartNotificationSent) {
+      debug('Sending charging started email with forecast data')
+      const startEmailData = {
+        forecastedGeneration: forecastData.forecastedGeneration,
+        adjustedTargetSOC: forecastData.adjustedTargetSOC,
+        originalTargetSOC: forecastData.originalTargetSOC,
+        forecastAdjustment: forecastData.forecastAdjustment,
+        currentSOC: stateOfCharge,
+        currentConsumption: forecastData.currentConsumption
+      }
+      await Email.sendChargingStartedEmail(startEmailData)
+      chargingStartNotificationSent = true
+      saveState()
+    } else {
+      debug('Charging start notification already sent for this session - skipping duplicate email')
+      console.log('⚠️ Charging already in progress - no duplicate notification sent')
     }
-    await Email.sendChargingStartedEmail(startEmailData)
     
   } else if (!on && actualCurrentChargingState) {
     // Stopping charge
@@ -322,6 +333,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     currentChargingState = false
     chargingStartTime = null
     chargingStartSOC = null
+    chargingStartNotificationSent = false
     debug('Reset charging state variables')
     saveState()
     
@@ -463,24 +475,77 @@ async function main () {
   const forecastIcon = forecastedGeneration !== null ? (forecastedGeneration > 5 ? '☀️' : forecastedGeneration > 1 ? '⛅' : '☁️') : '❓'
   console.log(`${forecastIcon} Solar Forecast: ${forecastedGeneration !== null ? forecastedGeneration.toFixed(1) + ' kWh' : 'N/A'}`)
   
-  // Enhanced decision display
-  if (forecastData && forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
-    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}% → ${forecastData.adjustedTargetSOC.toFixed(1)}% (forecast adjusted)`)
-  } else if (forecastData && forecastData.originalTargetSOC) {
-    console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}%`)
+  // Enhanced monthly targets display with forecast adjustment calculation
+  if (forecastData) {
+    const currentMonth = new Date().toLocaleString('default', { month: 'long' })
+    console.log(`📅 ${currentMonth} Targets:`)
+    
+    if (forecastData.morningTarget && forecastData.eveningTarget) {
+      console.log(`🌅 Morning Target: ${forecastData.morningTarget}% (daily minimum, no forecast adjustment)`)
+      console.log(`🌙 Evening Target: ${forecastData.eveningTarget}% (overnight needs)`)
+      
+      // Calculate evening adjustment for display even if outside charging window
+      if (forecastedGeneration !== null && forecastedGeneration > 0) {
+        const assumedBatteryCapacity = 31.2 // kWh - should match octopus.js
+        const forecastAdjustment = (forecastedGeneration / assumedBatteryCapacity) * 100
+        const eveningTargetAdjusted = Math.max(forecastData.morningTarget || 30, forecastData.eveningTarget - forecastAdjustment)
+        const finalTarget = Math.max(forecastData.morningTarget || 30, eveningTargetAdjusted)
+        
+        if (eveningTargetAdjusted !== forecastData.eveningTarget) {
+          console.log(`🌙 Evening Adjusted: ${eveningTargetAdjusted.toFixed(1)}% (reduced by ${forecastAdjustment.toFixed(1)}% due to ${forecastedGeneration}kWh forecast)`)
+        }
+        
+        console.log(`🎯 Final Target: ${finalTarget.toFixed(1)}% (higher of morning ${forecastData.morningTarget}% and evening ${eveningTargetAdjusted.toFixed(1)}%)`)
+      } else {
+        // No forecast data
+        console.log(`🎯 Final Target: ${forecastData.eveningTarget}% (higher of morning ${forecastData.morningTarget}% and evening ${forecastData.eveningTarget}%)`)
+      }
+    } else {
+      // Fallback for backward compatibility
+      if (forecastData.adjustedTargetSOC !== forecastData.originalTargetSOC) {
+        console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}% → ${forecastData.adjustedTargetSOC.toFixed(1)}% (forecast adjusted)`)
+      } else {
+        console.log(`🎯 Target SOC: ${forecastData.originalTargetSOC}%`)
+      }
+    }
   }
   
   // Time window information
   if (process.env.OCTOPUS_GO_ENABLED === 'true') {
     const windowIcon = FORCE_OCTOPUS_GO_WINDOW ? '🔧' : '⏰'
-    const windowText = FORCE_OCTOPUS_GO_WINDOW ? 'FORCED WINDOW MODE' : 'Normal operation'
+    let windowText
+    if (FORCE_OCTOPUS_GO_WINDOW) {
+      windowText = 'FORCED WINDOW MODE'
+    } else {
+      const inWindow = Octopus.isWithinOctopusGoWindow(FORCE_OCTOPUS_GO_WINDOW)
+      windowText = inWindow ? 'Normal operation' : 'High rate'
+    }
     console.log(`${windowIcon} Octopus Go: ${windowText}`)
   }
   
   // Final decision with prominent icon
   const decisionIcon = shouldCharge ? '🟢' : '🔴'
   const decisionText = shouldCharge ? 'START CHARGING' : 'STOP/CONTINUE NO CHARGING'
+  
+  // Generate BECAUSE explanation
+  let becauseText = ''
+  if (process.env.OCTOPUS_GO_ENABLED === 'true') {
+    const inWindow = Octopus.isWithinOctopusGoWindow(FORCE_OCTOPUS_GO_WINDOW)
+    if (!inWindow) {
+      becauseText = 'BECAUSE outside cheap rate window (high rate period)'
+    } else if (shouldCharge) {
+      const targetSOC = forecastData?.adjustedTargetSOC || 30
+      becauseText = `BECAUSE SOC ${stateOfCharge}% is below target ${targetSOC.toFixed(1)}% and in cheap rate window`
+    } else {
+      const targetSOC = forecastData?.adjustedTargetSOC || 30
+      becauseText = `BECAUSE SOC ${stateOfCharge}% is at/above target ${targetSOC.toFixed(1)}%`
+    }
+  } else {
+    becauseText = shouldCharge ? 'BECAUSE price is low and SOC is low' : 'BECAUSE price is high or SOC is sufficient'
+  }
+  
   console.log(`\n${decisionIcon} DECISION: ${decisionText}`)
+  console.log(`${becauseText}`)
   
   // SAFEGUARD: Prevent battery from being stuck in force charge mode
   if (currentChargingState === true && !shouldCharge) {
