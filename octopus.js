@@ -222,7 +222,7 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
       debug('Battery SOC at or above adjusted target - not charging', { 
         stateOfCharge, 
         adjustedTargetSOC, 
-        morningTarget: morningTargetSOC,
+        morningTarget: morningTarget,
         eveningTargetAdjusted,
         forecastAdjustment
       })
