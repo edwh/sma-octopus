@@ -252,22 +252,36 @@ test('Battery Control - Simple Test', async ({page}) => {
       // Calculate time window (1 minute ago to 30 minutes from now) - adjusted for BST
       const now = new Date()
       const startTime = new Date(now.getTime() - 1 * 60000) // 1 minute before now
-      const endTime = new Date(startTime.getTime() + 30 * 60000) // 30 minutes later
+      let endTime = new Date(startTime.getTime() + 30 * 60000) // 30 minutes later
       
-      // Adjust for BST (GMT+1) - add 1 hour to UTC times
-      const bstOffset = 60 * 60000 // 1 hour in milliseconds
-      const startTimeBST = new Date(startTime.getTime() + bstOffset)
-      const endTimeBST = new Date(endTime.getTime() + bstOffset)
+      // Safeguard: Ensure charging window doesn't exceed Octopus Go tariff end time
+      const octopusGoEndTime = process.env.OCTOPUS_GO_END_TIME || '05:30'
+      const [endHour, endMin] = octopusGoEndTime.split(':').map(Number)
       
-      const startTimeStr = `${startTimeBST.getHours().toString().padStart(2, '0')}:${startTimeBST.getMinutes().toString().padStart(2, '0')}`
-      const endTimeStr = `${endTimeBST.getHours().toString().padStart(2, '0')}:${endTimeBST.getMinutes().toString().padStart(2, '0')}`
+      // Create today's Octopus Go end time in GMT
+      const todayEndGMT = new Date()
+      todayEndGMT.setUTCHours(endHour, endMin, 0, 0)
       
-      console.log(`8. Setting charging window: ${startTimeStr} - ${endTimeStr}`)
+      // If the calculated end time would exceed the tariff window, cap it
+      if (endTime > todayEndGMT) {
+        endTime = todayEndGMT
+        console.log(`⚠️  Charging window capped to Octopus Go end time (${octopusGoEndTime} GMT)`)
+      }
+      
+      // Convert UTC times to local UK timezone (automatically handles BST/GMT)
+      // For display purposes, we need the actual local hours/minutes  
+      const startTimeParts = startTime.toLocaleString("en-GB", {timeZone: "Europe/London", hour12: false}).split(', ')[1].split(':')
+      const endTimeParts = endTime.toLocaleString("en-GB", {timeZone: "Europe/London", hour12: false}).split(', ')[1].split(':')
+      
+      const startTimeStr = `${startTimeParts[0]}:${startTimeParts[1]}`
+      const endTimeStr = `${endTimeParts[0]}:${endTimeParts[1]}`
+      
+      console.log(`8. Setting charging window: ${startTimeStr} - ${endTimeStr} (UK local time)`)
       console.log(`   Debug - Current time: ${now.toTimeString()}`)
       console.log(`   Debug - Start time UTC: ${startTime.toTimeString()}`)
-      console.log(`   Debug - Start time BST: ${startTimeBST.toTimeString()}`)
+      console.log(`   Debug - Start time UK local: ${startTime.toLocaleString("en-GB", {timeZone: "Europe/London"})}`)
       console.log(`   Debug - End time UTC: ${endTime.toTimeString()}`)
-      console.log(`   Debug - End time BST: ${endTimeBST.toTimeString()}`)
+      console.log(`   Debug - End time UK local: ${endTime.toLocaleString("en-GB", {timeZone: "Europe/London"})}`)
       
       // Fill time fields
       const startTimeInput = page.locator('#batChargeTable0Sub1tr1td1input')

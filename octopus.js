@@ -167,6 +167,35 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
       }
     }
     
+    // Additional safeguard: Don't start charging if too close to tariff end (within 10 minutes)
+    const now = new Date()
+    const gmtHours = now.getUTCHours()
+    const gmtMinutes = now.getUTCMinutes()
+    const currentTime = gmtHours * 100 + gmtMinutes
+    
+    const [endHour, endMin] = OCTOPUS_GO_END_TIME.split(':').map(Number)
+    const endTime = endHour * 100 + endMin
+    const timeUntilEnd = (endTime - currentTime + 2400) % 2400 // Handle midnight wraparound
+    
+    if (timeUntilEnd <= 10 && timeUntilEnd > 0) { // Within 10 minutes of end
+      debug('Too close to Octopus Go end time - rejecting charge to avoid overrun')
+      console.log(`⚠️ Too close to tariff end (${OCTOPUS_GO_END_TIME} GMT) - not starting charge to avoid overrun`)
+      
+      return {
+        shouldCharge: false,
+        forecastData: {
+          forecastedGeneration,
+          adjustedTargetSOC: eveningTarget,
+          originalTargetSOC: eveningTarget,
+          forecastAdjustment: 0,
+          currentConsumption,
+          morningTarget,
+          eveningTarget,
+          rationale: `Too close to Octopus Go end time (${OCTOPUS_GO_END_TIME} GMT). Only ${timeUntilEnd} minutes remaining - insufficient time for charging cycle.`
+        }
+      }
+    }
+    
     debug('Within Octopus Go window - checking SOC and consumption thresholds')
     console.log('Within Octopus Go window (', OCTOPUS_GO_START_TIME, '-', OCTOPUS_GO_END_TIME, ')')
     
