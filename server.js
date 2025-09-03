@@ -250,7 +250,11 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
         originalTargetSOC: forecastData.originalTargetSOC,
         forecastAdjustment: forecastData.forecastAdjustment,
         currentSOC: stateOfCharge,
-        currentConsumption: forecastData.currentConsumption
+        currentConsumption: forecastData.currentConsumption,
+        batteryCapacity: capacity,
+        pvGeneration: pvGeneration,
+        purchasedElectricity: purchasedElectricity,
+        batteryCharging: batteryCharging
       }
       await Email.sendChargingStartedEmail(startEmailData)
       chargingStartNotificationSent = true

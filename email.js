@@ -54,48 +54,32 @@ exports.sendChargingStartedEmail = async function(forecastData = {}) {
     let subject = 'Battery Charging Started'
     let text = `Battery charging has been turned ON at ${new Date().toLocaleString()}`
     
-    // Add forecast information if available
-    if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
-      text += `\n\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh expected today`
-      
-      if (forecastData.adjustedTargetSOC !== undefined && forecastData.originalTargetSOC !== undefined) {
-        text += `\n🎯 Target SOC: ${forecastData.adjustedTargetSOC.toFixed(1)}% (adjusted from ${forecastData.originalTargetSOC}%)`
-        text += `\n💡 Charging reduced by ${forecastData.forecastAdjustment.toFixed(1)}% due to expected solar generation`
-      }
-    } else {
-      text += `\n\n⚠️ No solar forecast data available - using standard target SOC`
-    }
-    
-    // Add current state information
+    // Current SOC (always show first)
     if (forecastData.currentSOC !== undefined) {
       text += `\n🔋 Current SOC: ${forecastData.currentSOC}%`
     }
     
-    if (forecastData.currentConsumption !== undefined) {
-      text += `\n⚡ Current consumption: ${(forecastData.currentConsumption / 1000).toFixed(2)} kW`
+    // Solar forecast with percentage calculation
+    if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
+      const batteryCapacity = forecastData.batteryCapacity || 31.2 // kWh fallback
+      const forecastPercentage = batteryCapacity ? ((forecastData.forecastedGeneration / batteryCapacity) * 100).toFixed(1) : 'unknown'
+      text += `\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh (${forecastPercentage}%) expected today`
+    } else {
+      text += `\n📈 Solar Forecast: No data available`
     }
     
-    // Add comprehensive system status
-    text += `\n\n=== SYSTEM STATUS ===`
-    if (forecastData.pvGeneration !== undefined && forecastData.pvGeneration !== null) {
-      text += `\n☀️ PV generation: ${(forecastData.pvGeneration / 1000).toFixed(2)} kW`
-    }
-    if (forecastData.purchasedElectricity !== undefined && forecastData.purchasedElectricity !== null) {
-      text += `\n🏠 Grid purchase: ${(forecastData.purchasedElectricity / 1000).toFixed(2)} kW`
-    }
-    if (forecastData.batteryCharging !== undefined && forecastData.batteryCharging !== null) {
-      text += `\n🔋 Battery charging: ${(forecastData.batteryCharging / 1000).toFixed(2)} kW`
+    // Target SOC with type indication
+    if (forecastData.adjustedTargetSOC !== undefined && forecastData.originalTargetSOC !== undefined) {
+      const targetType = forecastData.forecastAdjustment > 0 ? '(adjusted)' : '(original)'
+      text += `\n🎯 Target SOC: ${forecastData.adjustedTargetSOC.toFixed(1)}% ${targetType}`
+    } else if (forecastData.currentTargetSOC !== undefined) {
+      text += `\n🎯 Target SOC: ${forecastData.currentTargetSOC}% (standard)`
     }
     
-    // Add Octopus Go window info
-    const now = new Date()
-    const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0')
-    const startTime = process.env.OCTOPUS_GO_START_TIME || '00:30'
-    const endTime = process.env.OCTOPUS_GO_END_TIME || '05:30'
-    
-    text += `\n\n=== OCTOPUS GO ===`
-    text += `\n⏰ Time: ${currentTime}`
-    text += `\n🕐 Window: ${startTime} - ${endTime}`
+    // Decision reasoning
+    const targetSOC = forecastData.adjustedTargetSOC || forecastData.currentTargetSOC || 30
+    const currentSOC = forecastData.currentSOC || 0
+    text += `\n\n🟢 DECISION: START CHARGING BECAUSE SOC ${currentSOC}% is below target ${targetSOC.toFixed(1)}% and in cheap rate window`
 
     const mailOptions = {
       from: process.env.EMAIL_FROM,
