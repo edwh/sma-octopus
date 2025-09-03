@@ -140,25 +140,6 @@ exports.sendChargingStoppedEmail = async function(kWhCharged = null, socIncrease
       debug('Including estimated cost in email', estimatedCost)
     }
     
-    // Add forecast decision logic information
-    if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
-      text += `\n\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh expected today`
-      if (forecastData.adjustedTargetSOC !== undefined && forecastData.originalTargetSOC !== undefined) {
-        text += `\n🎯 Target SOC was adjusted from ${forecastData.originalTargetSOC}% to ${forecastData.adjustedTargetSOC.toFixed(1)}%`
-        text += `\n💡 Saved ~${forecastData.forecastAdjustment.toFixed(1)}% charging due to expected solar generation`
-        
-        // Calculate approximate savings
-        if (forecastData.forecastAdjustment > 0 && forecastData.batteryCapacity) {
-          const savedkWh = (forecastData.forecastAdjustment / 100) * forecastData.batteryCapacity
-          const octopusGoRate = parseFloat(process.env.OCTOPUS_GO_RATE) || 8.5
-          const savedCost = savedkWh * (octopusGoRate / 100)
-          text += `\n💰 Estimated savings: ${savedkWh.toFixed(2)} kWh (£${savedCost.toFixed(2)})`
-        }
-      }
-    } else {
-      text += `\n\n⚠️ No solar forecast data was available for this charging session`
-    }
-    
     if (subjectParts.length > 0) {
       subject += ` - ${subjectParts.join(', ')}`
     } else {
