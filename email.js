@@ -63,7 +63,7 @@ exports.sendChargingStartedEmail = async function(forecastData = {}) {
     if (forecastData.forecastedGeneration !== null && forecastData.forecastedGeneration !== undefined) {
       const batteryCapacity = forecastData.batteryCapacity || 31.2 // kWh fallback
       const forecastPercentage = batteryCapacity ? ((forecastData.forecastedGeneration / batteryCapacity) * 100).toFixed(1) : 'unknown'
-      text += `\n📈 Solar Forecast: ${forecastData.forecastedGeneration} kWh (${forecastPercentage}%) expected today`
+      text += `\n📈 Solar Forecast: ${forecastData.forecastedGeneration.toFixed(1)} kWh (${forecastPercentage}%) expected today`
     } else {
       text += `\n📈 Solar Forecast: No data available`
     }
@@ -164,6 +164,90 @@ exports.sendChargingStoppedEmail = async function(kWhCharged = null, socIncrease
   } catch (error) {
     debug('Error sending charging stopped email', error)
     console.error('Error sending charging stopped email:', error)
+  }
+}
+
+exports.sendDailySummaryEmail = async function(summaryData = {}) {
+  debug('sendDailySummaryEmail called', summaryData)
+  if (!EMAIL_ENABLED || !transporter) {
+    debug('Email disabled or no transporter - skipping email')
+    console.log('Email notifications disabled')
+    return
+  }
+
+  try {
+    let subject = 'Daily Charging Summary - No Charging Required'
+    let text = `Daily summary for ${new Date().toLocaleDateString()}\n`
+    text += `Octopus Go window ended at ${process.env.OCTOPUS_GO_END_TIME || '05:30'} GMT\n\n`
+    
+    // Current status
+    text += `📊 SYSTEM STATUS:\n`
+    
+    if (summaryData.currentSOC !== undefined) {
+      text += `🔋 Current SOC: ${summaryData.currentSOC}%\n`
+    }
+    
+    if (summaryData.minSOC !== undefined && summaryData.maxSOC !== undefined) {
+      text += `📈 SOC Range Today: ${summaryData.minSOC}% - ${summaryData.maxSOC}%\n`
+    }
+    
+    // Solar forecast
+    if (summaryData.forecastedGeneration !== null && summaryData.forecastedGeneration !== undefined) {
+      const batteryCapacity = summaryData.batteryCapacity || 31.2
+      const forecastPercentage = batteryCapacity ? ((summaryData.forecastedGeneration / batteryCapacity) * 100).toFixed(1) : 'unknown'
+      text += `☀️ Solar Forecast: ${summaryData.forecastedGeneration.toFixed(1)} kWh (${forecastPercentage}%)\n`
+    }
+    
+    // Target information
+    if (summaryData.morningTarget !== undefined) {
+      text += `🌅 Morning Target: ${summaryData.morningTarget}%\n`
+    }
+    
+    if (summaryData.adjustedTargetSOC !== undefined) {
+      const adjustment = summaryData.forecastAdjustment || 0
+      if (adjustment > 0) {
+        text += `🎯 Adjusted Target: ${summaryData.adjustedTargetSOC.toFixed(1)}% (reduced by ${adjustment.toFixed(1)}% due to forecast)\n`
+      } else {
+        text += `🎯 Target SOC: ${summaryData.adjustedTargetSOC.toFixed(1)}%\n`
+      }
+    }
+    
+    // Decision reason
+    text += `\n✅ NO CHARGING REQUIRED\n`
+    if (summaryData.currentSOC >= summaryData.adjustedTargetSOC) {
+      text += `SOC (${summaryData.currentSOC}%) remained above target (${summaryData.adjustedTargetSOC.toFixed(1)}%) throughout the cheap rate window\n`
+    } else {
+      text += `System conditions did not require charging during the cheap rate window\n`
+    }
+    
+    // Additional stats if available
+    if (summaryData.pvGeneration !== undefined) {
+      text += `\n📊 Current Generation: ${summaryData.pvGeneration} W\n`
+    }
+    
+    if (summaryData.currentConsumption !== undefined) {
+      text += `💡 Current Consumption: ${summaryData.currentConsumption} W\n`
+    }
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM,
+      to: process.env.EMAIL_TO,
+      subject: subject,
+      text: text
+    }
+    
+    debug('Sending daily summary email', { 
+      from: mailOptions.from, 
+      to: mailOptions.to, 
+      subject: mailOptions.subject 
+    })
+
+    await transporter.sendMail(mailOptions)
+    debug('Daily summary email sent successfully')
+    console.log('Daily summary email sent')
+  } catch (error) {
+    debug('Error sending daily summary email', error)
+    console.error('Error sending daily summary email:', error)
   }
 }
 

@@ -144,6 +144,9 @@ let chargingStartTime = null
 let chargingStartSOC = null
 let batteryCapacity = null
 let chargingStartNotificationSent = false
+let wasInChargingWindow = false
+let dailySummarySent = false
+let lastSummaryDate = null
 const stateFile = path.join(__dirname, 'charging-state.json')
 
 // Load previous state
@@ -157,8 +160,11 @@ function loadState() {
       chargingStartSOC = state.startSOC || null
       batteryCapacity = state.batteryCapacity || null
       chargingStartNotificationSent = state.chargingStartNotificationSent || false
-      debug('Successfully loaded state', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent })
-      console.log('Loaded previous state:', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent })
+      wasInChargingWindow = state.wasInChargingWindow || false
+      dailySummarySent = state.dailySummarySent || false
+      lastSummaryDate = state.lastSummaryDate || null
+      debug('Successfully loaded state', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent, wasInChargingWindow, dailySummarySent, lastSummaryDate })
+      console.log('Loaded previous state:', { currentChargingState, chargingStartTime, chargingStartSOC, batteryCapacity, chargingStartNotificationSent, wasInChargingWindow, dailySummarySent, lastSummaryDate })
     } else {
       debug('No previous state file found, using defaults')
     }
@@ -177,7 +183,10 @@ function saveState() {
       startTime: chargingStartTime?.toISOString(),
       startSOC: chargingStartSOC,
       batteryCapacity: batteryCapacity,
-      chargingStartNotificationSent: chargingStartNotificationSent
+      chargingStartNotificationSent: chargingStartNotificationSent,
+      wasInChargingWindow: wasInChargingWindow,
+      dailySummarySent: dailySummarySent,
+      lastSummaryDate: lastSummaryDate
     }
     debug('State to save', state)
     fs.writeFileSync(stateFile, JSON.stringify(state, null, 2))
@@ -251,10 +260,10 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
         forecastAdjustment: forecastData.forecastAdjustment,
         currentSOC: stateOfCharge,
         currentConsumption: forecastData.currentConsumption,
-        batteryCapacity: capacity,
-        pvGeneration: pvGeneration,
-        purchasedElectricity: purchasedElectricity,
-        batteryCharging: batteryCharging
+        batteryCapacity: currentCapacity || batteryCapacity,
+        pvGeneration: forecastData.pvGeneration,
+        purchasedElectricity: forecastData.purchasedElectricity,
+        batteryCharging: forecastData.batteryCharging
       }
       await Email.sendChargingStartedEmail(startEmailData)
       chargingStartNotificationSent = true
@@ -401,13 +410,13 @@ async function main () {
   const inverterData = await SMA.getAllInverterData()
   debug('All inverter data retrieved', inverterData)
   
-  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: currentChargingState, forceChargingWindows, forecastedGeneration } = inverterData
+  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: inverterChargingState, forceChargingWindows, forecastedGeneration } = inverterData
   
   debug('Extracted data components', {
     stateOfCharge,
     currentConsumption,
     currentCapacity,
-    currentChargingState,
+    inverterChargingState,
     forceChargingWindows,
     forecastedGeneration
   })
@@ -580,8 +589,78 @@ async function main () {
   
   console.log('═'.repeat(50))
 
+  // Check if we've just exited the charging window and should send daily summary
+  const inWindow = Octopus.isWithinOctopusGoWindow(FORCE_OCTOPUS_GO_WINDOW)
+  const today = new Date().toDateString()
+  
+  debug('Checking for daily summary conditions', { 
+    inWindow, 
+    wasInChargingWindow, 
+    dailySummarySent,
+    lastSummaryDate,
+    today,
+    chargingStartNotificationSent,
+    currentChargingState
+  })
+  
+  // If we exit the charging window and charging is still marked as active, we need to stop it
+  // This handles cases where the state file has stale data
+  if (!inWindow && currentChargingState && process.env.OCTOPUS_GO_ENABLED === 'true') {
+    debug('Exited charging window with charging still active - forcing stop')
+    console.log('⚠️ Charging window ended - stopping any active charging')
+    
+    // Force stop charging since we're outside the window
+    await setCharge(false, stateOfCharge, inverterChargingState, currentCapacity, forecastData)
+    
+    // The setCharge function will handle resetting the flags and sending stop email if needed
+  }
+  
+  // Send daily summary if:
+  // 1. We were in the charging window but now we're not (just exited)
+  // 2. We haven't sent a summary today
+  // 3. We didn't send any charging start notification (meaning no charging occurred)
+  if (wasInChargingWindow && !inWindow && (!dailySummarySent || lastSummaryDate !== today) && !chargingStartNotificationSent) {
+    debug('Sending daily summary email - no charging occurred during window')
+    
+    const summaryData = {
+      currentSOC: stateOfCharge,
+      forecastedGeneration: forecastedGeneration,
+      adjustedTargetSOC: forecastData?.adjustedTargetSOC,
+      originalTargetSOC: forecastData?.originalTargetSOC,
+      forecastAdjustment: forecastData?.forecastAdjustment,
+      batteryCapacity: currentCapacity || batteryCapacity,
+      morningTarget: forecastData?.morningTarget,
+      eveningTarget: forecastData?.eveningTarget,
+      pvGeneration: inverterData?.pvGeneration,
+      currentConsumption: currentConsumption
+    }
+    
+    try {
+      await Email.sendDailySummaryEmail(summaryData)
+      dailySummarySent = true
+      lastSummaryDate = today
+      saveState()
+      console.log('📧 Daily summary email sent - no charging was required')
+    } catch (error) {
+      debug('Failed to send daily summary email', error)
+      console.error('Failed to send daily summary email:', error)
+    }
+  }
+  
+  // Reset daily summary flag when we enter a new charging window
+  if (!wasInChargingWindow && inWindow) {
+    debug('Entering charging window - resetting daily summary flag')
+    dailySummarySent = false
+    chargingStartNotificationSent = false
+    saveState()
+  }
+  
+  // Update window tracking state
+  wasInChargingWindow = inWindow
+  saveState()
+
   debug('Calling setCharge with decision and forecast data', { shouldCharge, stateOfCharge, forecastData })
-  await setCharge(shouldCharge, stateOfCharge, currentChargingState, currentCapacity, forecastData)
+  await setCharge(shouldCharge, stateOfCharge, inverterChargingState, currentCapacity, forecastData)
   debug('===== MAIN FUNCTION COMPLETED =====')
 }
 
