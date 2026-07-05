@@ -1,6 +1,19 @@
 require('dotenv').config()
 const {test, expect} = require('@playwright/test')
 
+// Click helper: scroll into view, try a normal click with a short timeout, then fall
+// back to a forced click. Prevents the "retry until the whole test times out" hang that
+// a bare .click() causes when an element momentarily fails Playwright's actionability check.
+async function robustClick(locator, label) {
+  await locator.scrollIntoViewIfNeeded().catch(() => {})
+  try {
+    await locator.click({ timeout: 10000 })
+  } catch (e) {
+    console.log(`⚠️  Normal click failed for ${label}, forcing:`, e.message)
+    await locator.click({ force: true, timeout: 10000 })
+  }
+}
+
 // Simple version - just test the critical path
 test('Battery Control - Simple Test', async ({page}) => {
   // Check FORCE_CHARGE environment variable
@@ -193,48 +206,50 @@ test('Battery Control - Simple Test', async ({page}) => {
     if (addButtonCount > 0) {
       console.log('🎉 SUCCESS: Found addBatChargeButton! The script should work.')
       
-      // Remove existing windows first
-      const removeButtons = page.locator('img[src="../Tools/images/buttons/remove_segment_btn.png"]')
-      const removeCount = await removeButtons.count()
+      // Remove any existing battery charge windows first.
+      // IMPORTANT: scope to the battery charge table (id starts with "batChargeTable").
+      // The identical remove icon is also used by the Electricity Tariff table
+      // (rateInfoTable...); an unscoped selector matched those and deleted tariff rate
+      // rows, corrupting the tariff config. Scoping makes that impossible.
+      const removeSelector = 'img[src*="remove_segment_btn"][id^="batChargeTable"]'
+      const removeCount = await page.locator(removeSelector).count()
       console.log(`Found ${removeCount} existing charging windows`)
-      
+
       if (removeCount > 0) {
         console.log('6. Removing existing charging windows...')
+        // Remove exactly the initially-counted windows. Bounding by the initial count
+        // (rather than re-querying live) avoids a spurious extra iteration while the
+        // ASP.NET postback from the previous removal is still settling, which otherwise
+        // hangs the loop until the whole test times out.
         for (let i = 0; i < removeCount; i++) {
-          const removeBtn = removeButtons.first()
-          if (await removeBtn.count() > 0) {
-            await removeBtn.click()
-            await page.waitForTimeout(1000)
-            console.log(`   Removed window ${i + 1}/${removeCount}`)
-          }
+          await robustClick(page.locator(removeSelector).first(), 'remove window')
+          await page.waitForTimeout(1500)
+          console.log(`   Removed window ${i + 1}/${removeCount}`)
         }
         console.log('✅ All existing windows removed')
-        
+
         // Save the removal changes
         console.log('6a. Saving removal changes...')
-        const saveButton = page.locator('#ctl00_ContentPlaceHolder1_SaveButton')
-        await saveButton.click()
+        await robustClick(page.locator('#ctl00_ContentPlaceHolder1_SaveButton'), 'save (removal)')
         await page.waitForTimeout(5000)
-        
+
         // For OFF mode, we're done after removing windows
         if (isOffMode) {
           console.log('✅ OFF mode complete - all charging windows removed')
           await page.screenshot({ path: 'simple-off-complete.png', fullPage: true })
           return
         }
-        
+
         // Re-enter edit mode for ON mode
         console.log('6b. Re-entering edit mode...')
-        const editButton = page.locator('#ctl00_ContentPlaceHolder1_EditConfigurationButton')
-        await editButton.click({ force: true })
+        await robustClick(page.locator('#ctl00_ContentPlaceHolder1_EditConfigurationButton'), 're-enter edit')
         await page.waitForTimeout(5000)
-        
+
         console.log('✅ Back in edit mode after removal')
       } else if (isOffMode) {
         // OFF mode with no existing windows - just save and exit
         console.log('✅ OFF mode complete - no charging windows to remove')
-        const saveButton = page.locator('#ctl00_ContentPlaceHolder1_SaveButton')
-        await saveButton.click()
+        await robustClick(page.locator('#ctl00_ContentPlaceHolder1_SaveButton'), 'save (off, no windows)')
         await page.waitForTimeout(5000)
         await page.screenshot({ path: 'simple-off-complete.png', fullPage: true })
         return
@@ -244,7 +259,11 @@ test('Battery Control - Simple Test', async ({page}) => {
       if (isChargeMode) {
         // Try adding a test window
         console.log('7. Testing add charging window...')
-        await addButton.click()
+
+        // Click with a timeout + force fallback so a momentary actionability failure
+        // fails fast instead of hanging until the whole test times out.
+        await robustClick(addButton, 'addBatChargeButton')
+        console.log('✅ addBatChargeButton clicked')
       await page.waitForTimeout(3000)
       
       await page.screenshot({ path: 'simple-after-add-click.png', fullPage: true })
@@ -319,8 +338,7 @@ test('Battery Control - Simple Test', async ({page}) => {
       
       // Save
       console.log('9. Saving configuration...')
-      const saveButton = page.locator('#ctl00_ContentPlaceHolder1_SaveButton')
-      await saveButton.click()
+      await robustClick(page.locator('#ctl00_ContentPlaceHolder1_SaveButton'), 'save (add window)')
       await page.waitForTimeout(5000)
       
         await page.screenshot({ path: 'simple-saved.png', fullPage: true })
