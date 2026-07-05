@@ -1,5 +1,11 @@
 require('dotenv').config()
-const {test, expect} = require('@playwright/test')
+const {test} = require('@playwright/test')
+
+// Retry the whole flow on transient failures (e.g. a dropped socket during login).
+// Safe because both ON and OFF remove any existing charge windows before acting, so a
+// re-run cannot leave a duplicate or partial window. Scoped to this file so it does not
+// compound with the retry loop that sma.js already applies to the data-collection test.
+test.describe.configure({ retries: 2 })
 
 // Click helper: scroll into view, try a normal click with a short timeout, then fall
 // back to a forced click. Prevents the "retry until the whole test times out" hang that
@@ -281,10 +287,17 @@ test('Battery Control - Simple Test', async ({page}) => {
       const todayEndGMT = new Date()
       todayEndGMT.setUTCHours(endHour, endMin, 0, 0)
       
-      // If the calculated end time would exceed the tariff window, cap it
-      if (endTime > todayEndGMT) {
+      // Cap the window to the Octopus Go tariff end so we never force-charge past the
+      // cheap-rate period. Only cap when it still yields a valid forward window: if
+      // today's Go end is already in the past (e.g. a manual force ON outside the Go
+      // window), capping would make end <= start and produce a malformed overnight
+      // window that charges for hours at peak rate. In that case keep the plain
+      // 30-minute window instead.
+      if (endTime > todayEndGMT && todayEndGMT > startTime) {
         endTime = todayEndGMT
         console.log(`⚠️  Charging window capped to Octopus Go end time (${octopusGoEndTime} GMT)`)
+      } else if (endTime > todayEndGMT) {
+        console.log(`⚠️  Outside Go window - keeping plain 30-minute window (Go end ${octopusGoEndTime} GMT already passed)`)
       }
       
       // Convert UTC times to local UK timezone (automatically handles BST/GMT)
