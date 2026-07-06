@@ -18,6 +18,10 @@ charging-state.json
 
 # Runtime logs
 sma-octopus.out
+ev-samples-run.out
+
+# EV charging observational data (see ev-logger.js)
+ev-samples.csv
 
 # Playwright test screenshots (debug artifacts)
 simple-*.png
