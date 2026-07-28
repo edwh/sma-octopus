@@ -202,13 +202,17 @@ exports.sendDailySummaryEmail = async function(summaryData = {}) {
     if (summaryData.morningTarget !== undefined) {
       text += `🌅 Morning Target: ${summaryData.morningTarget}%\n`
     }
-    
+
+    if (summaryData.eveningTarget !== undefined) {
+      text += `🌙 Evening Target: ${summaryData.eveningTarget}%\n`
+    }
+
     if (summaryData.adjustedTargetSOC !== undefined) {
       const adjustment = summaryData.forecastAdjustment || 0
       if (adjustment > 0) {
-        text += `🎯 Adjusted Target: ${summaryData.adjustedTargetSOC.toFixed(1)}% (reduced by ${adjustment.toFixed(1)}% due to forecast)\n`
+        text += `🎯 Final Target: ${summaryData.adjustedTargetSOC.toFixed(1)}% (higher of morning and forecast-adjusted evening; evening reduced by ${adjustment.toFixed(1)}%)\n`
       } else {
-        text += `🎯 Target SOC: ${summaryData.adjustedTargetSOC.toFixed(1)}%\n`
+        text += `🎯 Final Target: ${summaryData.adjustedTargetSOC.toFixed(1)}% (higher of morning and evening)\n`
       }
     }
     
