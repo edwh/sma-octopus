@@ -6,6 +6,7 @@ node_modules/
 
 # State files
 charging-state.json
+standby-state.json
 
 # IDE
 .idea/
@@ -19,6 +20,7 @@ charging-state.json
 # Runtime logs
 sma-octopus.out
 ev-samples-run.out
+standby-monitor-run.out
 
 # EV charging observational data (see ev-logger.js)
 ev-samples.csv
@@ -26,4 +28,5 @@ ev-samples.csv
 # Playwright test screenshots (debug artifacts)
 simple-*.png
 diagnose-*.png
+standby-*.png
 debug-login-page.png
