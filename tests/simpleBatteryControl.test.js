@@ -196,15 +196,26 @@ test('Battery Control - Simple Test', async ({page}) => {
       console.log('✅ Edit button clicked with force')
     }
     
-    await page.waitForTimeout(8000) // Wait longer for edit mode
-    
-    console.log('✅ Edit mode activated (hopefully)')
-    
+    await page.waitForTimeout(8000) // Initial settle after Edit click
+
+    console.log('✅ Edit button clicked - waiting for charge editor to render...')
+
     await page.screenshot({ path: 'simple-edit-mode.png', fullPage: true })
-    
+
     // Look for addBatChargeButton
     console.log('5. Looking for addBatChargeButton...')
     const addButton = page.locator('#addBatChargeButton')
+
+    // The battery-charge editor renders via an ASP.NET postback that can be slow on the
+    // Pi. The old code assumed a fixed 8s was enough and immediately read .count(); when
+    // the postback ran long (consistently, overnight on 2026-07-28) the button was still
+    // absent, so no window was set and charging was silently skipped. Wait for the button
+    // to actually attach to the DOM instead of guessing a fixed delay.
+    try {
+      await addButton.waitFor({ state: 'attached', timeout: 30000 })
+    } catch (e) {
+      console.log('⚠️  addBatChargeButton did not appear within 30s of entering edit mode')
+    }
     const addButtonCount = await addButton.count()
     
     console.log(`Found ${addButtonCount} addBatChargeButton elements`)
@@ -360,11 +371,11 @@ test('Battery Control - Simple Test', async ({page}) => {
       
     } else {
       console.log('❌ addBatChargeButton not found in edit mode')
-      
-      // Search for all buttons to see what's available
+
+      // Search for all buttons to see what's available (diagnostic for the failure)
       const allButtons = await page.locator('button, input[type="button"], *[onclick]').all()
       console.log(`Found ${allButtons.length} interactive elements`)
-      
+
       for (let i = 0; i < Math.min(allButtons.length, 10); i++) {
         try {
           const button = allButtons[i]
@@ -375,6 +386,18 @@ test('Battery Control - Simple Test', async ({page}) => {
           }
         } catch (e) {}
       }
+
+      await page.screenshot({ path: 'simple-no-add-button.png', fullPage: true })
+
+      // CRITICAL: the battery-charge editor never loaded (addBatChargeButton absent),
+      // so we could neither add (ON) nor reliably remove (OFF) a charge window. This is
+      // usually a false "Edit mode activated" — the Edit click didn't render the charge
+      // config (only the nav menu is present). Do NOT let the test pass: a silent pass
+      // makes server.js believe charging started, set currentChargingState=true, send no
+      // error email, and skip charging entirely (seen 2026-07-28: battery stuck at 13%
+      // all night below the 30% morning floor). Throwing routes this to setCharge()'s
+      // catch (error email, no false state update) and triggers Playwright's retries.
+      throw new Error('addBatChargeButton not found in edit mode - battery charge editor did not load; cannot set/clear charge window')
     }
     
     await page.screenshot({ path: 'simple-final-result.png', fullPage: true })
