@@ -30,3 +30,7 @@ simple-*.png
 diagnose-*.png
 standby-*.png
 debug-login-page.png
+
+# ennexOS saved auth session (sensitive - session tokens)
+.ennexos-auth.json
+ennexos-*.png
