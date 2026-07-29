@@ -1,6 +1,23 @@
 require('dotenv').config()
 const Email = require('./email.js')
 const EnnexosApi = require('./ennexosApi.js')
+const fs = require('fs')
+const path = require('path')
+
+// Only alert on a SUSTAINED data-collection outage, not a one-off transient network blip
+// (e.g. a brief DNS/connection hiccup on the Pi - seen 2026-07-29, all 3 in-cycle retries
+// got "fetch failed" for ~40s then the next cycle succeeded). Require this many consecutive
+// FAILED CYCLES before emailing, and rate-limit repeats.
+const FAILURE_STATE_FILE = path.join(__dirname, 'data-failure-state.json')
+const FAILURE_ALERT_THRESHOLD = 2
+const FAILURE_ALERT_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
+
+function readFailureState() {
+  try { return JSON.parse(fs.readFileSync(FAILURE_STATE_FILE, 'utf8')) } catch (e) { return { consecutiveFailures: 0, lastAlertISO: null } }
+}
+function writeFailureState(s) {
+  try { fs.writeFileSync(FAILURE_STATE_FILE, JSON.stringify(s)) } catch (e) { /* best effort */ }
+}
 
 // Debug logging utility
 const DEBUG = process.env.DEBUG === 'true'
@@ -37,6 +54,8 @@ exports.getAllInverterData = async function () {
 
       debug(`ennexOS API success on attempt ${attempt}`, data)
       console.log('Got ennexOS data:', JSON.stringify(data, null, 2))
+      // Recovered - clear any consecutive-failure streak.
+      if (readFailureState().consecutiveFailures > 0) writeFailureState({ consecutiveFailures: 0, lastAlertISO: null })
       return data
     } catch (error) {
       lastError = error
@@ -48,10 +67,38 @@ exports.getAllInverterData = async function () {
     }
   }
 
-  // All attempts failed - alert and return a null-filled structure so callers degrade safely.
+  // All in-cycle retries failed. Only alert if this has now failed FAILURE_ALERT_THRESHOLD
+  // cycles in a row (a sustained outage), rate-limited - so a single transient blip is silent.
   console.log(`❌ ERROR: Failed to get data from ennexOS API after ${maxRetries} attempts`)
+  const failState = readFailureState()
+  failState.consecutiveFailures = (failState.consecutiveFailures || 0) + 1
+  const nowMs = Date.now()
+  const dueForAlert = failState.consecutiveFailures >= FAILURE_ALERT_THRESHOLD
+    && (!failState.lastAlertISO || nowMs - Date.parse(failState.lastAlertISO) >= FAILURE_ALERT_INTERVAL_MS)
+
+  if (!dueForAlert) {
+    const reason = failState.consecutiveFailures < FAILURE_ALERT_THRESHOLD
+      ? `transient (${failState.consecutiveFailures}/${FAILURE_ALERT_THRESHOLD} consecutive) - not alerting`
+      : 'within 4h rate-limit - not re-alerting'
+    console.log(`ennexOS data collection failed but ${reason}`)
+    writeFailureState(failState)
+    return {
+      stateOfCharge: null,
+      consumption: null,
+      capacity: null,
+      pvGeneration: null,
+      purchasedElectricity: null,
+      batteryCharging: null,
+      isCharging: null,
+      forceChargingWindows: null,
+      forecastedGeneration: null,
+    }
+  }
+
+  failState.lastAlertISO = new Date().toISOString()
+  writeFailureState(failState)
   await Email.sendErrorEmail('ennexOS Data Collection Critical Failure',
-    `Failed to get data from the ennexOS API after ${maxRetries} attempts`,
+    `Failed to get data from the ennexOS API for ${failState.consecutiveFailures} consecutive cycles`,
     {
       script: 'ennexosApi.getData()',
       operation: 'Complete ennexOS data collection',
