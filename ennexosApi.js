@@ -61,6 +61,8 @@ async function passwordGrant() {
 
 // Return a valid Bearer token, reusing an in-memory / on-disk cached one until ~30s before
 // it expires. The disk cache lets separate cron invocations share a token.
+let loginInFlight = null // shared promise so concurrent callers do ONE login, not N
+
 async function getToken() {
   const fresh = t => t && t.accessToken && t.expiresAt - Date.now() > 30000
   if (fresh(memToken)) return memToken.accessToken
@@ -71,9 +73,19 @@ async function getToken() {
     }
   } catch (e) { debug('token cache read failed', e.message) }
 
-  memToken = await passwordGrant()
-  try { fs.writeFileSync(TOKEN_CACHE, JSON.stringify(memToken)) } catch (e) { debug('token cache write failed', e.message) }
-  return memToken.accessToken
+  // Coalesce concurrent logins: getData() fires 3 reads in parallel, which used to trigger
+  // 3 simultaneous password grants (racing on the empty cache). Share one in-flight login.
+  if (!loginInFlight) {
+    loginInFlight = passwordGrant()
+      .then(tok => {
+        memToken = tok
+        try { fs.writeFileSync(TOKEN_CACHE, JSON.stringify(tok)) } catch (e) { debug('token cache write failed', e.message) }
+        return tok
+      })
+      .finally(() => { loginInFlight = null })
+  }
+  const t = await loginInFlight
+  return t.accessToken
 }
 
 async function api(method, endpoint, body) {
