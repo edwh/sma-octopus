@@ -1,30 +1,33 @@
 // standby-monitor.js — detect the inverter dropping into standby (e.g. after a power
 // cut) and alert, rate-limited to at most once every 4 hours.
 //
-// Primary signal (per observed behaviour): when the inverter is in standby, Sunny Portal
-// will NOT open the battery-charge editor, so tests/checkChargeEditor.test.js reports
-// CHARGE_EDITOR_REACHABLE: false. That is also the functionally meaningful condition —
-// if the editor is unreachable we cannot control charging regardless of the root cause.
+// Primary signal: when the inverter is in standby, Sunny Portal will NOT open the
+// battery-charge editor, so tests/checkChargeEditor.test.js reports
+// CHARGE_EDITOR_REACHABLE: false. That probe is lightweight and reliable even while the
+// inverter is in standby. It is also the functionally meaningful condition — if the
+// editor is unreachable we cannot control charging regardless of the root cause.
 //
-// False-alarm guards (both required before the first alert):
-//   1. Two consecutive detections (~30 min apart) — a one-off slow load won't page you.
-//   2. Corroboration from live data: battery flow zero/absent OR SOC unchanged since the
-//      last check. If the editor is momentarily unreachable while the battery is actively
-//      charging/discharging, the inverter is clearly NOT in standby, so we don't alert.
+// False-alarm guards:
+//   1. Two consecutive detections (~30 min apart) before the first alert — a one-off slow
+//      load won't page you.
+//   2. Best-effort VETO from the ev-logger's ev-samples.csv: if a FRESH sample shows the
+//      battery actively charging/discharging, the inverter is clearly operating, so a
+//      momentary editor hiccup is NOT treated as standby. Crucially this is a veto only —
+//      *absence* of data (stale/missing sample) does NOT block alerting, because during a
+//      real standby the data scrape also fails. (An earlier version REQUIRED a live
+//      getForecastData scrape to corroborate; that scrape fails during standby, so standby
+//      was never alerted and the failure emailed every cycle. Fixed.)
 //
 // On recovery (editor reachable again) it sends a one-off "recovered" email and resets.
+// Read-only: the probe never saves; this script only reads and writes its own state file.
 //
-// Read-only: the probe never saves; this script only reads inverter data and writes its
-// own state file.
-//
-// Testing hooks (bypass the ~5 min Playwright probe / portal for state-machine tests):
+// Testing hooks (bypass the ~5 min Playwright probe for state-machine tests):
 //   STANDBY_TEST_REACHABLE=true|false   inject the editor-reachable result
-//   STANDBY_TEST_BATT=<W|null>          inject batteryCharging (corroboration)
-//   STANDBY_TEST_SOC=<pct>              inject stateOfCharge
+//   STANDBY_TEST_BATT=<W|null>          inject a fresh sample's batteryCharging (veto input)
+//   STANDBY_TEST_SOC=<pct>              inject a fresh sample's stateOfCharge
 
 require('dotenv').config()
 process.chdir(__dirname) // checkChargeEditor.test.js runs via `npx playwright test` relative to cwd
-const SMA = require('./sma.js')
 const Email = require('./email.js')
 const fs = require('fs')
 const path = require('path')
@@ -32,8 +35,10 @@ const util = require('util')
 const exec = util.promisify(require('child_process').exec)
 
 const STATE_FILE = path.join(__dirname, 'standby-state.json')
+const EV_SAMPLES = path.join(__dirname, 'ev-samples.csv')
 const CONSECUTIVE_THRESHOLD = 2
 const ALERT_INTERVAL_MS = 4 * 60 * 60 * 1000 // 4 hours
+const SAMPLE_FRESH_MS = 45 * 60 * 1000       // an ev-sample older than this can't veto
 
 function loadState() {
   try {
@@ -68,27 +73,34 @@ async function probeEditorReachable() {
     return { reachable: false, inconclusive: true }
   }
   const reachable = m[1] === 'true'
-  // Editor genuinely reachable is always a clean result. Editor absent is only clean if
-  // the probe didn't also error out.
   return { reachable, inconclusive: reachable ? false : crashed }
 }
 
-async function getCorroboration() {
+// Best-effort corroboration from the ev-logger CSV (free - no extra Playwright scrape, so
+// it never adds load or spams failure emails). Returns the newest usable row or null.
+// Columns: timestamp,consumption,pv,purchased,soc,capacity,batteryCharging,isCharging,forecast
+function readLatestEvSample() {
   if (process.env.STANDBY_TEST_REACHABLE !== undefined) {
-    const batt = process.env.STANDBY_TEST_BATT
+    if (process.env.STANDBY_TEST_BATT === undefined && process.env.STANDBY_TEST_SOC === undefined) return null
+    const b = process.env.STANDBY_TEST_BATT
     return {
+      ageMinutes: 0,
+      batteryCharging: b === undefined || b === 'null' ? null : Number(b),
       stateOfCharge: process.env.STANDBY_TEST_SOC !== undefined ? Number(process.env.STANDBY_TEST_SOC) : null,
-      batteryCharging: batt === undefined || batt === 'null' ? null : Number(batt),
-      pvGeneration: null,
-      forecastedGeneration: null,
     }
   }
   try {
-    return await SMA.getAllInverterData()
-  } catch (e) {
-    console.log('⚠️  getAllInverterData failed during corroboration:', e.message)
-    return { stateOfCharge: null, batteryCharging: null, pvGeneration: null, forecastedGeneration: null }
-  }
+    const lines = fs.readFileSync(EV_SAMPLES, 'utf8').trim().split('\n')
+    for (let i = lines.length - 1; i >= 1; i--) {
+      const cols = lines[i].split(',')
+      const ts = Date.parse(cols[0])
+      if (Number.isNaN(ts)) continue
+      const soc = cols[4] === undefined || cols[4] === '' ? null : Number(cols[4])
+      const batt = cols[6] === undefined || cols[6] === '' ? null : Number(cols[6])
+      return { ageMinutes: (Date.now() - ts) / 60000, batteryCharging: batt, stateOfCharge: soc }
+    }
+  } catch (e) { /* no CSV yet */ }
+  return null
 }
 
 async function main() {
@@ -101,64 +113,47 @@ async function main() {
   console.log(`[standby-monitor ${nowISO}] editor reachable=${reachable} inconclusive=${inconclusive}`)
 
   if (inconclusive) {
-    // Don't change the standby streak on an inconclusive probe (network/portal error).
-    saveState(state)
+    saveState(state) // don't change the streak on a crashed/ambiguous probe
     console.log('Inconclusive probe - state unchanged')
     return
   }
 
-  if (reachable) {
-    // Normal operation. If we were in standby, announce recovery.
+  // Shared "inverter is operating normally" handling: recovery email if we had alerted, reset.
+  const clearToNormal = async (reason) => {
     if (state.inStandby) {
-      console.log('✅ Inverter recovered from standby - sending recovery email')
+      console.log(`✅ Inverter recovered from standby (${reason}) - sending recovery email`)
       await Email.sendErrorEmail(
         '✅ SMA inverter recovered from standby',
-        'The battery-charge editor is reachable again, so the inverter has come out of standby and charging control is restored.',
+        `The inverter has come out of standby (${reason}), so charging control is restored.`,
         { recoveredAt: nowISO, wasFirstDetected: state.firstDetectedISO }
       )
     }
     saveState({ consecutiveStandby: 0, inStandby: false, lastAlertISO: null, lastSOC: null, firstDetectedISO: null, lastCheckISO: nowISO })
+  }
+
+  if (reachable) {
+    await clearToNormal('editor reachable again')
     console.log('Editor reachable - not in standby')
     return
   }
 
-  // Editor unreachable -> corroborate before counting it as standby.
-  const data = await getCorroboration()
+  // Editor unreachable. VETO only if a fresh sample positively shows the battery flowing.
+  const sample = readLatestEvSample()
+  const operating = !!sample
+    && sample.ageMinutes < SAMPLE_FRESH_MS / 60000
+    && Number.isFinite(sample.batteryCharging)
+    && sample.batteryCharging !== 0
+  console.log(`   veto check: sample=${sample ? `age ${Math.round(sample.ageMinutes)}min batt=${sample.batteryCharging} soc=${sample.stateOfCharge}` : 'none'} => operating=${operating}`)
 
-  // A FAILED scrape returns all-null too, which must NOT masquerade as "battery flow zero".
-  // Require a successful read (SOC present) before trusting corroboration; otherwise hold
-  // the streak unchanged and wait for a clean reading rather than confirming/denying.
-  const scrapeOk = data.stateOfCharge !== null && data.stateOfCharge !== undefined
-  if (!scrapeOk) {
-    console.log('⚠️  Corroboration unavailable (inverter data scrape failed - no SOC) - holding streak, not confirming standby this cycle')
-    saveState(state)
+  if (operating) {
+    await clearToNormal('battery actively flowing - transient editor hiccup, not standby')
+    console.log('Editor unreachable but battery flowing - treating as transient, not standby')
     return
   }
 
-  const battZero = data.batteryCharging === null || data.batteryCharging === undefined || data.batteryCharging === 0
-  const socFrozen = state.lastSOC !== null && data.stateOfCharge === state.lastSOC
-  const corroborated = battZero || socFrozen
-  console.log(`   corroboration: batteryCharging=${data.batteryCharging} (zero/absent=${battZero}), SOC=${data.stateOfCharge} vs last ${state.lastSOC} (frozen=${socFrozen}) => ${corroborated}`)
-
-  if (!corroborated) {
-    // Editor unreachable but the inverter is clearly operating (battery flowing, SOC
-    // moving). Treat as a transient portal issue, not standby.
-    if (state.inStandby) {
-      // We had been alerting; the inverter is operating again -> recovery.
-      await Email.sendErrorEmail(
-        '✅ SMA inverter recovered from standby',
-        'The inverter is operating again (battery flow resumed / SOC moving), so it has come out of standby.',
-        { recoveredAt: nowISO, wasFirstDetected: state.firstDetectedISO }
-      )
-    }
-    saveState({ consecutiveStandby: 0, inStandby: false, lastAlertISO: null, lastSOC: data.stateOfCharge, firstDetectedISO: null, lastCheckISO: nowISO })
-    console.log('Editor unreachable but not corroborated - treating as transient, not standby')
-    return
-  }
-
-  // Confirmed standby signal.
+  // Not vetoed -> count as a standby detection (works even when scrapes fail).
   state.consecutiveStandby = (state.consecutiveStandby || 0) + 1
-  state.lastSOC = data.stateOfCharge
+  if (sample && sample.stateOfCharge !== null) state.lastSOC = sample.stateOfCharge
   if (!state.firstDetectedISO) state.firstDetectedISO = nowISO
   console.log(`   confirmed standby detection ${state.consecutiveStandby}/${CONSECUTIVE_THRESHOLD}`)
 
@@ -169,16 +164,14 @@ async function main() {
       console.log('🚨 Sending standby alert email')
       await Email.sendErrorEmail(
         '⚠️ SMA inverter appears to be in STANDBY',
-        'The battery-charge editor on Sunny Portal has been unreachable for two consecutive checks and the battery is not charging/discharging — '
-        + 'the inverter appears to be in standby (this happens after a power cut) and is not generating or charging. '
-        + 'It likely needs a manual restart. Charging control is suspended until it recovers.',
+        'The battery-charge editor on Sunny Portal has been unreachable for two consecutive checks — the inverter appears to be in standby '
+        + '(this happens after a power cut) and is not generating or charging. It likely needs a manual restart. '
+        + 'Charging control is suspended until it recovers.',
         {
           firstDetected: state.firstDetectedISO,
           consecutiveDetections: state.consecutiveStandby,
-          stateOfCharge: data.stateOfCharge,
-          batteryCharging: data.batteryCharging,
-          pvGeneration: data.pvGeneration,
-          forecastedGeneration: data.forecastedGeneration,
+          lastKnownSOC: state.lastSOC,
+          latestSample: sample ? `age ${Math.round(sample.ageMinutes)}min, batt=${sample.batteryCharging}, soc=${sample.stateOfCharge}` : 'none',
         }
       )
       state.lastAlertISO = nowISO
