@@ -2,6 +2,7 @@ require('dotenv').config()
 const SMA = require('./sma.js')
 const Octopus = require('./octopus.js')
 const Email = require('./email.js')
+const Forecast = require('./forecast.js')
 const fs = require('fs')
 const path = require('path')
 const util = require('util')
@@ -208,7 +209,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Starting to charge
     debug('Starting battery charging process')
     try {
-      const {stdout, stderr} = await exec('FORCE_CHARGE=on npx playwright test tests/simpleBatteryControl.test.js')
+      const {stdout, stderr} = await exec('FORCE_CHARGE=on npx playwright test tests/ennexosBatteryControl.test.js')
       console.log('Starting battery charging...', stdout, stderr)
       debug('Battery charging command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
     } catch (error) {
@@ -217,7 +218,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery On Script Error', error.message, {
-        script: 'tests/simpleBatteryControl.test.js (FORCE_CHARGE=on)',
+        script: 'tests/ennexosBatteryControl.test.js (FORCE_CHARGE=on)',
         operation: 'Starting battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
@@ -277,7 +278,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Stopping charge
     debug('Stopping battery charging process')
     try {
-      const {stdout, stderr} = await exec('FORCE_CHARGE=off npx playwright test tests/simpleBatteryControl.test.js')
+      const {stdout, stderr} = await exec('FORCE_CHARGE=off npx playwright test tests/ennexosBatteryControl.test.js')
       console.log('Stopping battery charging...', stdout, stderr)
       debug('Battery stop command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
     } catch (error) {
@@ -286,7 +287,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery Off Script Error', error.message, {
-        script: 'tests/simpleBatteryControl.test.js (FORCE_CHARGE=off)',
+        script: 'tests/ennexosBatteryControl.test.js (FORCE_CHARGE=off)',
         operation: 'Stopping battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
@@ -410,8 +411,15 @@ async function main () {
   const inverterData = await SMA.getAllInverterData()
   debug('All inverter data retrieved', inverterData)
   
-  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: inverterChargingState, forceChargingWindows, forecastedGeneration } = inverterData
-  
+  const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: inverterChargingState, forceChargingWindows } = inverterData
+  let forecastedGeneration = inverterData.forecastedGeneration
+
+  // ennexOS doesn't expose a PV forecast, so fetch one from forecast.solar (if configured).
+  if (forecastedGeneration === null || forecastedGeneration === undefined) {
+    forecastedGeneration = await Forecast.getSolarForecastKwh()
+    debug('Solar forecast from forecast.solar', { forecastedGeneration })
+  }
+
   debug('Extracted data components', {
     stateOfCharge,
     currentConsumption,

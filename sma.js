@@ -51,7 +51,10 @@ exports.getAllInverterData = async function () {
         debug('Starting Playwright test execution - this may take 2-3 minutes...')
         
         const startTime = Date.now()
-        const {stdout, stderr} = await exec('npx playwright test getForecastData.test.js')
+        // Scrape live data. The scrape is self-healing: it reuses the saved session and
+        // logs in inline if it has expired (see tests/ennexosSession.js), so no separate
+        // auth step is needed here.
+        const {stdout, stderr} = await exec('npx playwright test ennexosData.test.js')
         const executionTime = ((Date.now() - startTime) / 1000).toFixed(1)
         debug(`Playwright test completed in ${executionTime} seconds`)
         debug('Sunny Portal data collection completed', {
@@ -70,125 +73,54 @@ exports.getAllInverterData = async function () {
           }
         })
         
-        // Parse all data from Sunny Portal output
+        // Parse marker lines emitted by ennexosData.test.js
         for (const line of lines) {
           const cleanLine = line.replace(/\x1B\[[0-9;]*[mK]/g, '').replace(/\x1A\x2K/g, '')
-          
-          // Parse SOC from Sunny Portal
-          if (cleanLine.includes('SOC_FROM_SUNNY_PORTAL:')) {
-            const match = cleanLine.match(/SOC_FROM_SUNNY_PORTAL:\s*([0-9.]+)/)
-            if (match) {
-              data.stateOfCharge = parseFloat(match[1])
-              debug('Found SOC from Sunny Portal', { soc: data.stateOfCharge })
-            }
+
+          let m
+          if ((m = cleanLine.match(/SOC_FROM_ENNEXOS:\s*([0-9.]+)/))) {
+            data.stateOfCharge = parseFloat(m[1])
+            debug('Found SOC from ennexOS', { soc: data.stateOfCharge })
           }
-          
-          // Parse capacity from Sunny Portal
-          if (cleanLine.includes('CAPACITY_FROM_SUNNY_PORTAL:')) {
-            const match = cleanLine.match(/CAPACITY_FROM_SUNNY_PORTAL:\s*([0-9.]+)/)
-            if (match) {
-              data.capacity = parseFloat(match[1])
-              debug('Found capacity from Sunny Portal', { capacity: data.capacity })
-            }
+          if ((m = cleanLine.match(/CAPACITY_FROM_ENNEXOS:\s*([0-9.]+)/))) {
+            data.capacity = parseFloat(m[1])
+            debug('Found capacity from ennexOS', { capacity: data.capacity })
           }
-          
-          // Parse power values
-          if (cleanLine.includes('✅ PV Generation:')) {
-            const match = cleanLine.match(/PV Generation:\s*([0-9.]+)\s*W/)
-            if (match) {
-              data.pvGeneration = parseFloat(match[1])
-              debug('Found PV generation', { pvGeneration: data.pvGeneration })
-              powerValuesFound++
-            }
-          } else if (cleanLine.includes('✅ Total Consumption:') || cleanLine.includes('✅ Consumption (')) {
-            const match = cleanLine.match(/(?:Total )?Consumption[^:]*:\s*([0-9.]+)\s*W/)
-            if (match) {
-              data.consumption = parseFloat(match[1])
-              debug('Found consumption', { consumption: data.consumption })
-              powerValuesFound++
-            }
-          } else if (cleanLine.includes('✅ Purchased Electricity:')) {
-            const match = cleanLine.match(/Purchased Electricity:\s*([0-9.]+)\s*W/)
-            if (match) {
-              data.purchasedElectricity = parseFloat(match[1])
-              debug('Found purchased electricity', { purchasedElectricity: data.purchasedElectricity })
-              powerValuesFound++
-            }
-          } else if (cleanLine.includes('✅ Battery Charging:')) {
-            const match = cleanLine.match(/Battery Charging:\s*([0-9.]+)\s*W/)
-            if (match) {
-              data.batteryCharging = parseFloat(match[1])
-              debug('Found battery charging', { batteryCharging: data.batteryCharging })
-              powerValuesFound++
-            }
+          if ((m = cleanLine.match(/PV_GENERATION_W:\s*(-?[0-9.]+)/))) {
+            data.pvGeneration = parseFloat(m[1])
+            powerValuesFound++
           }
-          
-          // Parse force charging windows
-          if (cleanLine.includes('FORCE_CHARGE_WINDOWS_FOUND:')) {
-            const match = cleanLine.match(/FORCE_CHARGE_WINDOWS_FOUND:\s*(\d+)/)
-            if (match) {
-              data.forceChargingWindows = parseInt(match[1])
-              debug('Found force charging windows count', { forceChargingWindows: data.forceChargingWindows })
-            } else if (cleanLine.includes('ERROR')) {
-              debug('Error detected in force charging check')
-              data.forceChargingWindows = null
-            }
+          if ((m = cleanLine.match(/CONSUMPTION_W:\s*(-?[0-9.]+)/))) {
+            data.consumption = parseFloat(m[1])
+            powerValuesFound++
           }
-          
-          // Parse forecast data
-          if (cleanLine.includes('Calculated forecast sum:')) {
-            const match = cleanLine.match(/Calculated forecast sum:\s*([0-9.]+)\s*kWh/)
-            if (match) {
-              const rawForecast = parseFloat(match[1])
-              // Apply forecast multiplier if configured
-              const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100') / 100
-              data.forecastedGeneration = rawForecast * forecastMultiplier
-              debug('Found and adjusted forecast sum from Sunny Portal', { 
-                rawForecast, 
-                multiplier: forecastMultiplier, 
-                adjustedForecast: data.forecastedGeneration 
-              })
-            }
+          if ((m = cleanLine.match(/BATTERY_POWER_W:\s*(-?[0-9.]+)/))) {
+            // Positive = charging, negative = discharging.
+            data.batteryCharging = parseFloat(m[1])
+            powerValuesFound++
           }
-          
-          // Also look for individual energy values if forecast sum not found
-          if (!data.forecastedGeneration && cleanLine.includes('Energy values found on page:')) {
-            debug('Found energy values line for forecast', { line: cleanLine })
-            const energyMatches = cleanLine.match(/(\d+\.?\d*)\s*kWh?/gi) || []
-            let calculatedSum = 0
-            for (const match of energyMatches) {
-              const value = parseFloat(match.replace(/[^\d.]/g, ''))
-              if (value > 0 && value < 100) { // Reasonable range for daily generation
-                calculatedSum += value
-              }
-            }
-            if (calculatedSum > 0) {
-              // Apply forecast multiplier if configured
-              const forecastMultiplier = parseFloat(process.env.SUNNY_PORTAL_FORECAST_MULTIPLIER || '100') / 100
-              data.forecastedGeneration = calculatedSum * forecastMultiplier
-              debug('Calculated and adjusted forecast from energy values', { 
-                rawSum: calculatedSum, 
-                multiplier: forecastMultiplier, 
-                adjustedForecast: data.forecastedGeneration 
-              })
-            }
+          if ((m = cleanLine.match(/FORCE_CHARGE_WINDOWS_FOUND:\s*(\d+)/))) {
+            data.forceChargingWindows = parseInt(m[1])
+          }
+          if ((m = cleanLine.match(/FORCE_CHARGE_ACTIVE:\s*(true|false)/))) {
+            data.isCharging = m[1] === 'true'
           }
         }
-        
-        // Determine charging state based on force charging windows
-        data.isCharging = data.forceChargingWindows !== null ? data.forceChargingWindows > 0 : null
-        
+
+        // Forecast is not yet available from ennexOS; leave null (no target adjustment).
+        data.forecastedGeneration = null
+
         debug('Charging state determination', {
-          portalWindowCount: data.forceChargingWindows,
+          forceChargingWindows: data.forceChargingWindows,
           isCharging: data.isCharging
         })
-        
-        // Calculate purchased electricity if missing
-        if (!data.purchasedElectricity && data.consumption && data.pvGeneration) {
+
+        // Derive purchased electricity if not directly available.
+        if (data.purchasedElectricity === null && data.consumption !== null && data.pvGeneration !== null) {
           data.purchasedElectricity = Math.max(0, data.consumption - data.pvGeneration)
           debug('Calculated purchased electricity', { purchasedElectricity: data.purchasedElectricity })
         }
-        
+
         // Check if we got critical data
         const hasEssentialData = data.stateOfCharge !== null || powerValuesFound >= 1
         
@@ -212,7 +144,7 @@ exports.getAllInverterData = async function () {
           Email.sendErrorEmail('Sunny Portal Data Collection Critical Failure', 
             `Failed to get data from Sunny Portal after ${maxRetries} attempts`, 
             {
-              script: 'getForecastData.test.js',
+              script: 'ennexosAuth.test.js + ennexosData.test.js',
               operation: 'Complete Sunny Portal data collection',
               error: error.message,
               stackTrace: error.stack,
