@@ -3,10 +3,9 @@ const SMA = require('./sma.js')
 const Octopus = require('./octopus.js')
 const Email = require('./email.js')
 const Forecast = require('./forecast.js')
+const EnnexosApi = require('./ennexosApi.js')
 const fs = require('fs')
 const path = require('path')
-const util = require('util')
-const exec = util.promisify(require('child_process').exec)
 
 // File lock functionality
 const LOCK_FILE = path.join(__dirname, '.server.lock')
@@ -209,16 +208,16 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Starting to charge
     debug('Starting battery charging process')
     try {
-      const {stdout, stderr} = await exec('FORCE_CHARGE=on npx playwright test tests/ennexosBatteryControl.test.js')
-      console.log('Starting battery charging...', stdout, stderr)
-      debug('Battery charging command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
+      await EnnexosApi.setForceCharge(true)
+      console.log('Starting battery charging...')
+      debug('Force charge ON via ennexOS API')
     } catch (error) {
       debug('Error executing battery on script', error)
       console.error('Error starting battery charging:', error)
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery On Script Error', error.message, {
-        script: 'tests/ennexosBatteryControl.test.js (FORCE_CHARGE=on)',
+        script: 'ennexosApi.setForceCharge(true)',
         operation: 'Starting battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
@@ -278,16 +277,16 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     // Stopping charge
     debug('Stopping battery charging process')
     try {
-      const {stdout, stderr} = await exec('FORCE_CHARGE=off npx playwright test tests/ennexosBatteryControl.test.js')
-      console.log('Stopping battery charging...', stdout, stderr)
-      debug('Battery stop command executed', { stdout: stdout.length + ' chars', stderr: stderr.length + ' chars' })
+      await EnnexosApi.setForceCharge(false)
+      console.log('Stopping battery charging...')
+      debug('Force charge OFF via ennexOS API')
     } catch (error) {
       debug('Error executing battery off script', error)
       console.error('Error stopping battery charging:', error)
       
       // Send detailed error email
       await Email.sendErrorEmail('Battery Off Script Error', error.message, {
-        script: 'tests/ennexosBatteryControl.test.js (FORCE_CHARGE=off)',
+        script: 'ennexosApi.setForceCharge(false)',
         operation: 'Stopping battery charging',
         stdout: error.stdout || 'No stdout',
         stderr: error.stderr || 'No stderr',
