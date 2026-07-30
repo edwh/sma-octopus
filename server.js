@@ -569,9 +569,11 @@ async function main () {
   
   // SAFEGUARD: Prevent battery from being stuck in force charge mode.
   if (currentChargingState === true && !shouldCharge) {
-    if (inverterChargingState === true) {
-      // The battery is ACTUALLY force-charging when it shouldn't be - genuine safeguard.
-      console.log('⚠️  SAFEGUARD ALERT: Battery is in force charge mode but logic says not to charge!')
+    const inGoWindow = Octopus.isWithinOctopusGoWindow(FORCE_OCTOPUS_GO_WINDOW)
+    if (inverterChargingState === true && !inGoWindow) {
+      // Genuinely stuck: still force-charging OUTSIDE the cheap window - this is the real
+      // "battery left stuck in force charge" failure worth alarming on.
+      console.log('⚠️  SAFEGUARD ALERT: Battery is force-charging outside the Go window but logic says not to charge!')
       console.log('🛡️  This could leave the battery stuck in force charge - ensuring it gets turned off')
 
       // Send alert email about the safeguard action
@@ -594,6 +596,10 @@ async function main () {
       } catch (emailError) {
         debug('Failed to send safeguard alert email', emailError)
       }
+    } else if (inverterChargingState === true) {
+      // Inside the Go window and the logic just decided to stop (e.g. SOC reached target).
+      // That's a normal mid-window stop - setCharge(false) below turns it off. No alarm.
+      console.log('ℹ️  Charge target reached mid-window - stopping normally, no safeguard alarm')
     } else {
       // Cached flag says charging but the inverter reports it is NOT force-charging (e.g. its
       // window expired and it stopped on its own, or direct API testing changed state outside
