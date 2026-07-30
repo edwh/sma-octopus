@@ -413,6 +413,16 @@ async function main () {
   const { stateOfCharge, consumption: currentConsumption, capacity: currentCapacity, isCharging: inverterChargingState, forceChargingWindows } = inverterData
   let forecastedGeneration = inverterData.forecastedGeneration
 
+  // Do NOT make a charge decision when SOC is unavailable. getAllInverterData() returns a
+  // null-filled structure after failed data collection; treating a null SOC as 0% would
+  // falsely trigger charging (seen 2026-07-30 05:00: "SOC 0% below target" -> charged on a
+  // transient null read). Skip this cycle - the data failure is already tracked/alerted upstream.
+  if (stateOfCharge === null || stateOfCharge === undefined) {
+    console.log('⚠️ State of charge unavailable this cycle - skipping charge decision (not treating null as 0%)')
+    debug('SOC null/undefined - holding charge state, no decision this cycle')
+    return
+  }
+
   // ennexOS doesn't expose a PV forecast, so fetch one from forecast.solar (if configured).
   if (forecastedGeneration === null || forecastedGeneration === undefined) {
     forecastedGeneration = await Forecast.getSolarForecastKwh()
