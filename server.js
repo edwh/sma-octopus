@@ -567,30 +567,40 @@ async function main () {
   console.log(`\n${decisionIcon} DECISION: ${decisionText}`)
   console.log(`${becauseText}`)
   
-  // SAFEGUARD: Prevent battery from being stuck in force charge mode
+  // SAFEGUARD: Prevent battery from being stuck in force charge mode.
   if (currentChargingState === true && !shouldCharge) {
-    console.log('⚠️  SAFEGUARD ALERT: Battery is in force charge mode but logic says not to charge!')
-    console.log('🛡️  This could leave the battery stuck in force charge - ensuring it gets turned off')
-    
-    // Send alert email about the safeguard action
-    try {
-      await Email.sendErrorEmail('Battery Force Charge Safeguard Activated', 
-        'Battery was detected in force charge mode but charging logic determined it should not be charging. Safeguard activated to prevent battery being stuck in force charge.', 
-        {
-          currentState: 'Force charging (parameter = 1)',
-          expectedState: 'Not charging (parameter = 91)',
-          action: 'Forcing battery off to prevent being stuck in force charge',
-          stateOfCharge: stateOfCharge + '%',
-          safeguardReason: shouldCharge ? 'Logic says should charge' : 'Logic says should NOT charge',
-          systemInfo: {
-            timestamp: new Date().toISOString(),
-            OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
-            forecastedGeneration: forecastData?.forecastedGeneration || 'N/A'
+    if (inverterChargingState === true) {
+      // The battery is ACTUALLY force-charging when it shouldn't be - genuine safeguard.
+      console.log('⚠️  SAFEGUARD ALERT: Battery is in force charge mode but logic says not to charge!')
+      console.log('🛡️  This could leave the battery stuck in force charge - ensuring it gets turned off')
+
+      // Send alert email about the safeguard action
+      try {
+        await Email.sendErrorEmail('Battery Force Charge Safeguard Activated',
+          'Battery was detected in force charge mode but charging logic determined it should not be charging. Safeguard activated to prevent battery being stuck in force charge.',
+          {
+            currentState: 'Force charging (parameter = 1)',
+            expectedState: 'Not charging (parameter = 91)',
+            action: 'Forcing battery off to prevent being stuck in force charge',
+            stateOfCharge: stateOfCharge + '%',
+            safeguardReason: shouldCharge ? 'Logic says should charge' : 'Logic says should NOT charge',
+            systemInfo: {
+              timestamp: new Date().toISOString(),
+              OCTOPUS_GO_ENABLED: process.env.OCTOPUS_GO_ENABLED,
+              forecastedGeneration: forecastData?.forecastedGeneration || 'N/A'
+            }
           }
-        }
-      )
-    } catch (emailError) {
-      debug('Failed to send safeguard alert email', emailError)
+        )
+      } catch (emailError) {
+        debug('Failed to send safeguard alert email', emailError)
+      }
+    } else {
+      // Cached flag says charging but the inverter reports it is NOT force-charging (e.g. its
+      // window expired and it stopped on its own, or direct API testing changed state outside
+      // server.js). The battery is not stuck - just heal the stale cache quietly, no alarm.
+      console.log('ℹ️  Cached charging flag was stale (inverter not force-charging) - clearing it, no safeguard email')
+      currentChargingState = false
+      saveState()
     }
   }
   
