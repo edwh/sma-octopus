@@ -144,6 +144,7 @@ let chargingStartTime = null
 let chargingStartSOC = null
 let batteryCapacity = null
 let chargingStartNotificationSent = false
+let chargedDuringWindow = false // true if charging happened at any point this window (survives mid-window stops)
 let wasInChargingWindow = false
 let dailySummarySent = false
 let lastSummaryDate = null
@@ -160,6 +161,7 @@ function loadState() {
       chargingStartSOC = state.startSOC || null
       batteryCapacity = state.batteryCapacity || null
       chargingStartNotificationSent = state.chargingStartNotificationSent || false
+      chargedDuringWindow = state.chargedDuringWindow || false
       wasInChargingWindow = state.wasInChargingWindow || false
       dailySummarySent = state.dailySummarySent || false
       lastSummaryDate = state.lastSummaryDate || null
@@ -184,6 +186,7 @@ function saveState() {
       startSOC: chargingStartSOC,
       batteryCapacity: batteryCapacity,
       chargingStartNotificationSent: chargingStartNotificationSent,
+      chargedDuringWindow: chargedDuringWindow,
       wasInChargingWindow: wasInChargingWindow,
       dailySummarySent: dailySummarySent,
       lastSummaryDate: lastSummaryDate
@@ -240,6 +243,7 @@ async function setCharge (on, stateOfCharge, currentChargingStateFromInverter, c
     
     // Update charging state with current inverter data
     currentChargingState = true
+    chargedDuringWindow = true // remember charging happened this window, even if it stops later
     chargingStartTime = new Date()
     chargingStartSOC = stateOfCharge
     // Store the capacity at charging start time for accurate calculations later
@@ -648,11 +652,15 @@ async function main () {
     // The setCharge function will handle resetting the flags and sending stop email if needed
   }
   
-  // Send daily summary if:
+  // Send the "no charging required" daily summary only if:
   // 1. We were in the charging window but now we're not (just exited)
   // 2. We haven't sent a summary today
-  // 3. We didn't send any charging start notification (meaning no charging occurred)
-  if (wasInChargingWindow && !inWindow && (!dailySummarySent || lastSummaryDate !== today) && !chargingStartNotificationSent) {
+  // 3. Charging did NOT occur at any point this window. (Use chargedDuringWindow, which
+  //    survives mid-window stops - chargingStartNotificationSent gets reset when charging
+  //    stops at target, which used to make this summary wrongly claim "no charging" on a
+  //    night that did charge briefly. When charging did occur, the charging-stopped email
+  //    is the report instead.)
+  if (wasInChargingWindow && !inWindow && (!dailySummarySent || lastSummaryDate !== today) && !chargedDuringWindow) {
     debug('Sending daily summary email - no charging occurred during window')
     
     const summaryData = {
@@ -685,6 +693,7 @@ async function main () {
     debug('Entering charging window - resetting daily summary flag')
     dailySummarySent = false
     chargingStartNotificationSent = false
+    chargedDuringWindow = false // fresh window - no charging yet
     saveState()
   }
   
