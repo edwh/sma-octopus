@@ -28,7 +28,7 @@ const OCTOPUS_GO_RATE = parseFloat(process.env.OCTOPUS_GO_RATE) || 8.5
 const CONSUMPTION_START_THRESHOLD = parseFloat(process.env.CONSUMPTION_START_THRESHOLD) || 3000
 const CONSUMPTION_STOP_THRESHOLD = parseFloat(process.env.CONSUMPTION_STOP_THRESHOLD) || 6000
 // Parse monthly CSV targets - format: Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec
-const MORNING_TARGETS_CSV = process.env.OCTOPUS_GO_MORNING_TARGET_SOC || '45,45,45,30,30,30,30,30,30,45,45,45'
+const MORNING_TARGETS_CSV = process.env.OCTOPUS_GO_MORNING_TARGET_SOC || '100,100,100,60,40,40,40,40,60,100,100,100'
 const EVENING_TARGETS_CSV = process.env.OCTOPUS_GO_EVENING_TARGET_SOC || '60,60,60,55,55,55,55,55,55,60,60,60'
 
 const MONTHLY_MORNING_TARGETS = MORNING_TARGETS_CSV.split(',').map(v => parseFloat(v.trim()))
