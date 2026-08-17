@@ -1,4 +1,12 @@
-// ev-logger.js — read-only daytime sampler for EV-charging inference.
+// ev-logger.js — read-only 24/7 sampler for EV-charging inference.
+//
+// Purpose: capture the household load profile so we can (1) spot the EV's ~4 kW charging
+// blocks in `consumption`, (2) learn the typical daily EV kWh from history, (3) predict
+// the morning EV draw, and (4) size the overnight cheap-window battery top-up to cover it
+// (store at 8.5p instead of buying the morning shortfall at ~31p peak). Runs 24/7 (cron
+// :05/:35) — the morning EV block that drains the battery falls outside the old daytime-only
+// window, so full-day coverage is needed. Records consumption/pv/purchased/battFlow/SOC,
+// which together separate load vs solar vs grid vs battery.
 //
 // Appends one row of inverter telemetry to ev-samples.csv each time it runs.
 // Intended to be driven by cron every 30 min across the daytime window
