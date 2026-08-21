@@ -1,4 +1,5 @@
 require('dotenv').config()
+const EvForecast = require('./ev-forecast.js')
 
 // Debug logging utility
 const DEBUG = process.env.DEBUG === 'true'
@@ -236,14 +237,27 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     }
     
     // Use the higher of morning target and adjusted evening target
-    const adjustedTargetSOC = Math.max(morningTarget, eveningTargetAdjusted)
-    
+    let adjustedTargetSOC = Math.max(morningTarget, eveningTargetAdjusted)
+
+    // EV TOP-UP: add the expected morning EV draw (estimated from historical consumption in
+    // ev-samples.csv) on TOP of the target, so the battery holds cheap overnight energy to
+    // cover the morning car charge instead of buying it at peak. This is added AFTER the solar
+    // reduction because the morning charge happens before solar can help. Seasonal + bounded;
+    // returns 0 when disabled / no data. See ev-forecast.js.
+    const evTopup = EvForecast.getEvTopupPercent(31.2)
+    if (evTopup.topupPct > 0) {
+      const before = adjustedTargetSOC
+      adjustedTargetSOC = Math.min(100, adjustedTargetSOC + evTopup.topupPct)
+      console.log(`🚗 EV top-up: +${evTopup.topupPct.toFixed(1)}% (avg ${evTopup.avgDailyKwh.toFixed(1)} kWh/day over ${evTopup.days}d × seasonal ${(evTopup.seasonalFactor * 100).toFixed(0)}%) → target ${before.toFixed(1)}% → ${adjustedTargetSOC.toFixed(1)}%`)
+    }
+
     debug('Final target calculation during Octopus Go window', {
       morningTarget,
       eveningTargetAdjusted,
+      evTopupPct: evTopup.topupPct,
       finalTarget: adjustedTargetSOC
     })
-    
+
     console.log('🎯 Charging targets: Morning', morningTarget, '%, Evening', eveningTargetAdjusted.toFixed(1), '% → Using', adjustedTargetSOC.toFixed(1), '%')
     
     // Check if battery SOC is already at or above adjusted target
