@@ -248,7 +248,7 @@ exports.shouldCharge = async function (stateOfCharge, currentConsumption = null,
     if (evTopup.topupPct > 0) {
       const before = adjustedTargetSOC
       adjustedTargetSOC = Math.min(100, adjustedTargetSOC + evTopup.topupPct)
-      console.log(`🚗 EV top-up: +${evTopup.topupPct.toFixed(1)}% (avg ${evTopup.avgDailyKwh.toFixed(1)} kWh/day over ${evTopup.days}d × seasonal ${(evTopup.seasonalFactor * 100).toFixed(0)}%) → target ${before.toFixed(1)}% → ${adjustedTargetSOC.toFixed(1)}%`)
+      console.log(`🚗 EV top-up: +${evTopup.topupPct.toFixed(1)}% (typical ${evTopup.typicalKwh.toFixed(1)} kWh − recent ${evTopup.recentKwh.toFixed(1)} kWh = ${evTopup.expectedKwh.toFixed(1)} kWh expected × seasonal ${(evTopup.seasonalFactor * 100).toFixed(0)}%) → target ${before.toFixed(1)}% → ${adjustedTargetSOC.toFixed(1)}%`)
     }
 
     debug('Final target calculation during Octopus Go window', {
