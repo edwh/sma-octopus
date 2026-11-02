@@ -11,7 +11,8 @@
     "test": "npx playwright test",
     "test:headless": "npx playwright test --headed=false",
     "install-playwright": "npx playwright install",
-    "install-deps": "npx playwright install-deps"
+    "install-deps": "npx playwright install-deps",
+    "test:unit": "node --test unit-tests/"
   },
   "keywords": [],
   "author": "",

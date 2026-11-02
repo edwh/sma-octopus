@@ -95,12 +95,13 @@ function isWithinOctopusGoWindow(forceWindow = false) {
   })
   
   let withinWindow
+  // The window is half-open: the start is cheap, the end is already peak (05:30 itself is peak).
   // Handle time windows that cross midnight
   if (startTime > endTime) {
-    withinWindow = currentTime >= startTime || currentTime <= endTime
+    withinWindow = currentTime >= startTime || currentTime < endTime
     debug('Time window crosses midnight', { withinWindow })
   } else {
-    withinWindow = currentTime >= startTime && currentTime <= endTime
+    withinWindow = currentTime >= startTime && currentTime < endTime
     debug('Normal time window', { withinWindow })
   }
   
